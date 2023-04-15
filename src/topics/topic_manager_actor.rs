@@ -1,6 +1,3 @@
-use crate::topics::topic_actor::{PublishMessagesError, TopicRequest};
-use crate::topics::topic_actor::{PublishMessagesRequest, PublishMessagesResponse};
-use crate::topics::topic_message::TopicMessage;
 use crate::topics::*;
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
@@ -14,7 +11,7 @@ pub(crate) enum TopicManagerRequest {
     },
     GetTopic {
         name: TopicName,
-        responder: oneshot::Sender<Result<TopicInfo, GetTopicError>>,
+        responder: oneshot::Sender<Result<Topic, GetTopicError>>,
     },
     ListTopics {
         project_id: Box<str>,
@@ -24,11 +21,6 @@ pub(crate) enum TopicManagerRequest {
         /// items after 1.
         page_offset: Option<usize>,
         responder: oneshot::Sender<Result<TopicsPage, ListTopicsError>>,
-    },
-    PublishMessages {
-        topic_name: TopicName,
-        messages: Vec<TopicMessage>,
-        responder: oneshot::Sender<Result<PublishMessagesResponse, PublishMessagesError>>,
     },
 }
 
@@ -78,7 +70,9 @@ impl TopicsPage {
 /// through messages. It also maintains the state.
 pub(crate) struct TopicManagerActor {
     topics: HashMap<TopicName, Topic>,
+    /// The next ID for when creating a topic.
     next_id: u32,
+    /// The receiver part of the request channel.
     receiver: mpsc::Receiver<TopicManagerRequest>,
 }
 
@@ -118,20 +112,13 @@ impl TopicManagerActor {
                 let result = self.list_topics(&project_id, page_size, page_offset);
                 let _ = responder.send(result);
             }
-            TopicManagerRequest::PublishMessages {
-                topic_name,
-                messages,
-                responder,
-            } => {
-                self.publish_messages(topic_name, messages, responder);
-            }
         };
     }
 
-    fn get_topic(&self, name: TopicName) -> Result<TopicInfo, GetTopicError> {
+    fn get_topic(&self, name: TopicName) -> Result<Topic, GetTopicError> {
         self.topics
             .get(&name)
-            .map(|c| c.info.clone())
+            .map(|c| c.clone())
             .ok_or(GetTopicError::DoesNotExist)
     }
 
@@ -195,21 +182,21 @@ impl TopicManagerActor {
         let page = TopicsPage::new(topics_for_project, new_offset);
         Ok(page)
     }
-
-    fn publish_messages(
-        &mut self,
-        topic_name: TopicName,
-        messages: Vec<TopicMessage>,
-        responder: oneshot::Sender<Result<PublishMessagesResponse, PublishMessagesError>>,
-    ) {
-        if let Some(topic) = self.topics.get(&topic_name) {
-            let request = PublishMessagesRequest {
-                messages,
-                responder,
-            };
-            topic.handle.send(TopicRequest::PublishMessages(request));
-        } else {
-            let _ = responder.send(Err(PublishMessagesError::TopicDoesNotExist));
-        }
-    }
+    //
+    // fn publish_messages(
+    //     &mut self,
+    //     topic_name: TopicName,
+    //     messages: Vec<TopicMessage>,
+    //     responder: oneshot::Sender<Result<PublishMessagesResponse, PublishMessagesError>>,
+    // ) {
+    //     if let Some(topic) = self.topics.get(&topic_name) {
+    //         let request = PublishMessagesRequest {
+    //             messages,
+    //             responder,
+    //         };
+    //         topic.handle.send(TopicRequest::PublishMessages(request));
+    //     } else {
+    //         let _ = responder.send(Err(PublishMessagesError::TopicDoesNotExist));
+    //     }
+    // }
 }

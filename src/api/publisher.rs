@@ -18,6 +18,20 @@ impl PublisherService {
     pub fn new(topic_manager: Arc<TopicManager>) -> Self {
         Self { topic_manager }
     }
+
+    /// Gets the internal topic.
+    async fn get_topic_internal(
+        &self,
+        topic_name: TopicName,
+    ) -> Result<crate::topics::Topic, Status> {
+        self.topic_manager
+            .get_topic(topic_name)
+            .await
+            .map_err(|e| match e {
+                GetTopicError::DoesNotExist => Status::failed_precondition("Topic does not exist"),
+                GetTopicError::Closed => Status::internal("System is shutting down"),
+            })
+    }
 }
 
 #[async_trait::async_trait]
@@ -60,6 +74,9 @@ impl Publisher for PublisherService {
     ) -> Result<Response<PublishResponse>, Status> {
         let request = request.get_ref();
         let topic_name = parse_topic_name(&request.topic)?;
+
+        let topic = self.get_topic_internal(topic_name).await?;
+
         let mut messages = Vec::with_capacity(request.messages.len());
 
         for m in request.messages.iter() {
@@ -68,9 +85,8 @@ impl Publisher for PublisherService {
             messages.push(message);
         }
 
-        let result = self
-            .topic_manager
-            .publish_messages(topic_name, messages)
+        let result = topic
+            .publish_messages(messages)
             .await
             .map_err(|e| match e {
                 // TODO: Verify what the real Pub/Sub service returns.
@@ -94,17 +110,10 @@ impl Publisher for PublisherService {
         let request = request.get_ref();
         let topic_name = parse_topic_name(&request.topic)?;
 
-        let topic = self
-            .topic_manager
-            .get_topic(topic_name)
-            .await
-            .map_err(|e| match e {
-                GetTopicError::DoesNotExist => Status::failed_precondition("Topic does not exist"),
-                GetTopicError::Closed => Status::internal("System is shutting down"),
-            })?;
+        let topic = self.get_topic_internal(topic_name).await?;
 
         Ok(Response::new(Topic {
-            name: topic.name.to_string(),
+            name: topic.info.name.to_string(),
             labels: Default::default(),
             message_storage_policy: None,
             kms_key_name: "".to_string(),

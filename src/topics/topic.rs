@@ -1,9 +1,13 @@
-use crate::topics::topic_actor::{TopicActor, TopicRequest};
-use crate::topics::TopicName;
+use crate::topics::topic_actor::{
+    PublishMessagesError, PublishMessagesResponse, TopicActor, TopicRequest,
+};
+use crate::topics::{TopicMessage, TopicName};
 use std::cmp::Ordering;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 
 /// The `Topic` that we interact with.
+/// Any mutable state is kept within the actor.
+#[derive(Clone)]
 pub struct Topic {
     /// Info about the topic, such as its' name.
     pub info: TopicInfo,
@@ -12,43 +16,36 @@ pub struct Topic {
     /// number.
     pub internal_id: u32,
 
-    /// Handle for the actor, used for interacting with it.
-    pub handle: TopicHandle,
-}
-
-// A handle for sending messages to a `Topic`.
-// Cheap to clone.
-#[derive(Clone)]
-pub struct TopicHandle {
-    /// The sender for the internal actor.
-    pub sender: mpsc::Sender<TopicRequest>,
+    /// The topic actor's mailbox.
+    sender: mpsc::Sender<TopicRequest>,
 }
 
 impl Topic {
     /// Creates a new `Topic`.
     pub fn new(info: TopicInfo, internal_id: u32) -> Self {
         let sender = TopicActor::start(internal_id);
-        let topic = Self {
+        Self {
             info,
             internal_id,
-            handle: TopicHandle::new(sender),
+            sender,
+        }
+    }
+
+    /// Publishes the messages.
+    pub async fn publish_messages(
+        &self,
+        messages: Vec<TopicMessage>,
+    ) -> Result<PublishMessagesResponse, PublishMessagesError> {
+        let (send, recv) = oneshot::channel();
+        let request = TopicRequest::PublishMessages {
+            messages,
+            responder: send,
         };
-        topic
-    }
-}
-
-impl TopicHandle {
-    /// Creates a new `TopicHandle`.
-    pub fn new(sender: mpsc::Sender<TopicRequest>) -> Self {
-        Self { sender }
-    }
-
-    /// Sends a request to the topic.
-    pub fn send(&self, request: TopicRequest) {
-        let sender = self.sender.clone();
-        tokio::spawn(async move {
-            let _ = sender.send(request).await;
-        });
+        self.sender
+            .send(request)
+            .await
+            .map_err(|_| PublishMessagesError::Closed)?;
+        recv.await.map_err(|_| PublishMessagesError::Closed)?
     }
 }
 

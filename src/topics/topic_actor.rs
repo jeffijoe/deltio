@@ -4,13 +4,16 @@ use tokio::sync::{mpsc, oneshot};
 
 /// Requests for the `TopicActor`.
 pub enum TopicRequest {
-    PublishMessages(PublishMessagesRequest),
+    PublishMessages {
+        messages: Vec<TopicMessage>,
+        responder: oneshot::Sender<Result<PublishMessagesResponse, PublishMessagesError>>,
+    },
 }
 
 /// Request for publishing messages.
 pub struct PublishMessagesRequest {
-    pub messages: Vec<TopicMessage>,
-    pub responder: oneshot::Sender<Result<PublishMessagesResponse, PublishMessagesError>>,
+    messages: Vec<TopicMessage>,
+    responder: oneshot::Sender<Result<PublishMessagesResponse, PublishMessagesError>>,
 }
 
 /// Errors for publishing messages.
@@ -60,10 +63,10 @@ impl TopicActor {
 
     fn receive(&mut self, request: TopicRequest) {
         match request {
-            TopicRequest::PublishMessages(PublishMessagesRequest {
+            TopicRequest::PublishMessages {
                 messages,
                 responder,
-            }) => {
+            } => {
                 let result = self.publish_messages(messages);
                 let _ = responder.send(result);
             }

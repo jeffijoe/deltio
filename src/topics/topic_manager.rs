@@ -1,6 +1,4 @@
-use crate::topics::topic_actor::PublishMessagesResponse;
 use crate::topics::topic_manager_actor::*;
-use crate::topics::topic_message::TopicMessage;
 use crate::topics::*;
 use tokio::sync::mpsc;
 use tokio::sync::oneshot;
@@ -38,7 +36,7 @@ impl TopicManager {
     }
 
     /// Gets a topic.
-    pub async fn get_topic(&self, name: TopicName) -> Result<TopicInfo, GetTopicError> {
+    pub async fn get_topic(&self, name: TopicName) -> Result<Topic, GetTopicError> {
         let (send, recv) = oneshot::channel();
         let request = TopicManagerRequest::GetTopic {
             name,
@@ -72,26 +70,5 @@ impl TopicManager {
             .await
             .map_err(|_| ListTopicsError::Closed)?;
         recv.await.map_err(|_| ListTopicsError::Closed)?
-    }
-
-    /// Publishes messages to a topic.
-    pub async fn publish_messages(
-        &self,
-        topic_name: TopicName,
-        messages: Vec<TopicMessage>,
-    ) -> Result<PublishMessagesResponse, PublishMessagesError> {
-        let (send, recv) = oneshot::channel();
-        let request = TopicManagerRequest::PublishMessages {
-            topic_name,
-            messages,
-            responder: send,
-        };
-
-        self.sender
-            .send(request)
-            .await
-            .map_err(|_| PublishMessagesError::Closed)?;
-
-        recv.await.map_err(|_| PublishMessagesError::Closed)?
     }
 }
