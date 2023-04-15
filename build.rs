@@ -4,8 +4,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .build_server(true)
         .build_client(true)
         .compile(
-            &["src/proto/googleapis/google/pubsub/v1/pubsub.proto"],
-            &["src/proto/googleapis"],
+            &["proto/googleapis/google/pubsub/v1/pubsub.proto"],
+            &["proto/googleapis"],
         )?;
     Ok(())
 }

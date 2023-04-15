@@ -1,6 +1,6 @@
 use deltio::make_server_builder;
-use deltio::pubsub::publisher_client::PublisherClient;
-use deltio::pubsub::subscriber_client::SubscriberClient;
+use deltio::pubsub_proto::publisher_client::PublisherClient;
+use deltio::pubsub_proto::subscriber_client::SubscriberClient;
 use tokio::net::{UnixListener, UnixStream};
 use tokio_stream::wrappers::UnixListenerStream;
 use tonic::transport::{Channel, Endpoint};
