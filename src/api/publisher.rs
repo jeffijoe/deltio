@@ -1,9 +1,9 @@
 use crate::api::page_token::PageToken;
+use crate::api::parser;
 use crate::pubsub_proto::publisher_server::Publisher;
 use crate::pubsub_proto::*;
-use crate::topics::topic_manager::{
-    CreateTopicError, GetTopicError, ListTopicsError, PublishMessagesError, TopicManager,
-};
+use crate::topics::topic_manager::TopicManager;
+use crate::topics::{CreateTopicError, GetTopicError, ListTopicsError, PublishMessagesError};
 use crate::topics::{TopicMessage, TopicName};
 use bytes::Bytes;
 use std::collections::HashMap;
@@ -22,11 +22,10 @@ impl PublisherService {
     /// Gets the internal topic.
     async fn get_topic_internal(
         &self,
-        topic_name: TopicName,
-    ) -> Result<crate::topics::Topic, Status> {
+        topic_name: &TopicName,
+    ) -> Result<Arc<crate::topics::Topic>, Status> {
         self.topic_manager
-            .get_topic(topic_name)
-            .await
+            .get_topic(&topic_name)
             .map_err(|e| match e {
                 GetTopicError::DoesNotExist => Status::failed_precondition("Topic does not exist"),
                 GetTopicError::Closed => Status::internal("System is shutting down"),
@@ -38,11 +37,10 @@ impl PublisherService {
 impl Publisher for PublisherService {
     async fn create_topic(&self, request: Request<Topic>) -> Result<Response<Topic>, Status> {
         let request = request.get_ref();
-        let topic_name = parse_topic_name(&request.name)?;
+        let topic_name = parser::parse_topic_name(&request.name)?;
 
         self.topic_manager
             .create_topic(topic_name.clone())
-            .await
             .map_err(|e| match e {
                 CreateTopicError::AlreadyExists => Status::already_exists("Topic already exists"),
                 // TODO: Figure out a more generic way to handle this.
@@ -73,9 +71,9 @@ impl Publisher for PublisherService {
         request: Request<PublishRequest>,
     ) -> Result<Response<PublishResponse>, Status> {
         let request = request.get_ref();
-        let topic_name = parse_topic_name(&request.topic)?;
+        let topic_name = parser::parse_topic_name(&request.topic)?;
 
-        let topic = self.get_topic_internal(topic_name).await?;
+        let topic = self.get_topic_internal(&topic_name).await?;
 
         let mut messages = Vec::with_capacity(request.messages.len());
 
@@ -108,9 +106,9 @@ impl Publisher for PublisherService {
         request: Request<GetTopicRequest>,
     ) -> Result<Response<Topic>, Status> {
         let request = request.get_ref();
-        let topic_name = parse_topic_name(&request.topic)?;
+        let topic_name = parser::parse_topic_name(&request.topic)?;
 
-        let topic = self.get_topic_internal(topic_name).await?;
+        let topic = self.get_topic_internal(&topic_name).await?;
 
         Ok(Response::new(Topic {
             name: topic.info.name.to_string(),
@@ -148,7 +146,6 @@ impl Publisher for PublisherService {
                 page_size,
                 page_token_value.map(|v| v.value),
             )
-            .await
             .map_err(|e| match e {
                 ListTopicsError::Closed => Status::internal("System is shutting down"),
             })?;
@@ -156,8 +153,8 @@ impl Publisher for PublisherService {
         let topics = page
             .topics
             .into_iter()
-            .map(|info| Topic {
-                name: info.name.to_string(),
+            .map(|topic| Topic {
+                name: topic.info.name.to_string(),
                 labels: HashMap::default(),
                 message_storage_policy: None,
                 kms_key_name: "".to_string(),
@@ -202,10 +199,4 @@ impl Publisher for PublisherService {
     ) -> Result<Response<DetachSubscriptionResponse>, Status> {
         todo!()
     }
-}
-
-/// Parses the topic name.
-fn parse_topic_name(raw_value: &str) -> Result<TopicName, Status> {
-    TopicName::try_parse(&raw_value)
-        .ok_or_else(|| Status::invalid_argument(format!("Invalid topic name '{}'", &raw_value)))
 }

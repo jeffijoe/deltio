@@ -1,13 +1,12 @@
-use crate::topics::topic_actor::{
-    PublishMessagesError, PublishMessagesResponse, TopicActor, TopicRequest,
-};
-use crate::topics::{TopicMessage, TopicName};
+use crate::subscriptions::Subscription;
+use crate::topics::topic_actor::{PublishMessagesResponse, TopicActor, TopicRequest};
+use crate::topics::{AttachSubscriptionError, PublishMessagesError, TopicMessage, TopicName};
 use std::cmp::Ordering;
+use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot};
 
 /// The `Topic` that we interact with.
 /// Any mutable state is kept within the actor.
-#[derive(Clone)]
 pub struct Topic {
     /// Info about the topic, such as its' name.
     pub info: TopicInfo,
@@ -18,6 +17,13 @@ pub struct Topic {
 
     /// The topic actor's mailbox.
     sender: mpsc::Sender<TopicRequest>,
+}
+
+/// Provides information about the topic.
+#[derive(Clone)]
+pub struct TopicInfo {
+    /// The name of the topic.
+    pub name: TopicName,
 }
 
 impl Topic {
@@ -47,6 +53,23 @@ impl Topic {
             .map_err(|_| PublishMessagesError::Closed)?;
         recv.await.map_err(|_| PublishMessagesError::Closed)?
     }
+
+    /// Attaches the subscription to the topic.
+    pub async fn attach_subscription(
+        &self,
+        subscription: Arc<Subscription>,
+    ) -> Result<(), AttachSubscriptionError> {
+        let (send, recv) = oneshot::channel();
+        let request = TopicRequest::AttachSubscription {
+            subscription,
+            responder: send,
+        };
+        self.sender
+            .send(request)
+            .await
+            .map_err(|_| AttachSubscriptionError::Closed)?;
+        recv.await.map_err(|_| AttachSubscriptionError::Closed)?
+    }
 }
 
 /// Topics are considered equal when they have the same ID.
@@ -69,13 +92,6 @@ impl Ord for Topic {
     fn cmp(&self, other: &Self) -> Ordering {
         self.internal_id.cmp(&other.internal_id)
     }
-}
-
-/// Provides information about the topic.
-#[derive(Clone)]
-pub struct TopicInfo {
-    /// The name of the topic.
-    pub name: TopicName,
 }
 
 impl TopicInfo {

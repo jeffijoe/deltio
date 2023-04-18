@@ -1,4 +1,8 @@
+use crate::subscriptions::{Subscription, SubscriptionName};
 use crate::topics::topic_message::{MessageId, TopicMessage};
+use crate::topics::{AttachSubscriptionError, PublishMessagesError};
+use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::SystemTime;
 use tokio::sync::{mpsc, oneshot};
 
@@ -8,22 +12,11 @@ pub enum TopicRequest {
         messages: Vec<TopicMessage>,
         responder: oneshot::Sender<Result<PublishMessagesResponse, PublishMessagesError>>,
     },
-}
 
-/// Request for publishing messages.
-pub struct PublishMessagesRequest {
-    messages: Vec<TopicMessage>,
-    responder: oneshot::Sender<Result<PublishMessagesResponse, PublishMessagesError>>,
-}
-
-/// Errors for publishing messages.
-#[derive(thiserror::Error, Debug)]
-pub enum PublishMessagesError {
-    #[error("The topic does not exist")]
-    TopicDoesNotExist,
-
-    #[error("The topic is closed")]
-    Closed,
+    AttachSubscription {
+        subscription: Arc<Subscription>,
+        responder: oneshot::Sender<Result<(), AttachSubscriptionError>>,
+    },
 }
 
 /// Response for publishing messages.
@@ -35,7 +28,11 @@ pub struct PublishMessagesResponse {
 /// Manages the topic.
 pub struct TopicActor {
     /// The messages that have been published to the topic.
-    messages: Vec<TopicMessage>,
+    /// Since messages can be big, they are passed around as references.
+    messages: Vec<Arc<TopicMessage>>,
+
+    /// The list of attached subscriptions for the topic.
+    subscriptions: HashMap<SubscriptionName, Arc<Subscription>>,
 
     // The internal ID of the topic.
     topic_internal_id: u32,
@@ -49,19 +46,21 @@ impl TopicActor {
         let (sender, mut receiver) = mpsc::channel(2048);
         let mut actor = Self {
             topic_internal_id,
-            messages: Vec::default(),
+            messages: Default::default(),
             next_message_id: 0,
+            subscriptions: Default::default(),
         };
+
         tokio::spawn(async move {
             while let Some(request) = receiver.recv().await {
-                actor.receive(request)
+                actor.receive(request).await;
             }
         });
 
         sender
     }
 
-    fn receive(&mut self, request: TopicRequest) {
+    async fn receive(&mut self, request: TopicRequest) {
         match request {
             TopicRequest::PublishMessages {
                 messages,
@@ -70,12 +69,20 @@ impl TopicActor {
                 let result = self.publish_messages(messages);
                 let _ = responder.send(result);
             }
+
+            TopicRequest::AttachSubscription {
+                subscription,
+                responder,
+            } => {
+                let result = self.attach_subscription(subscription);
+                let _ = responder.send(result);
+            }
         }
     }
 
     fn publish_messages(
         &mut self,
-        mut messages: Vec<TopicMessage>,
+        messages: Vec<TopicMessage>,
     ) -> Result<PublishMessagesResponse, PublishMessagesError> {
         // Define the publish time as now.
         let publish_time = SystemTime::now();
@@ -83,15 +90,32 @@ impl TopicActor {
         // We'll need to return the published message IDs.
         let mut message_ids = Vec::with_capacity(messages.len());
 
-        // Mark the messages as published.
-        for m in messages.iter_mut() {
+        // Ensure we have capacity.
+        self.messages.reserve(messages.len());
+
+        // Mark the messages as published and add them to the topic.
+        self.messages.extend(messages.into_iter().map(|mut m| {
             self.next_message_id += 1;
             let message_id = MessageId::new(self.topic_internal_id, self.next_message_id);
             m.publish(message_id, publish_time);
             message_ids.push(message_id);
+
+            Arc::new(m)
+        }));
+
+        Ok(PublishMessagesResponse { message_ids })
+    }
+
+    fn attach_subscription(
+        &mut self,
+        subscription: Arc<Subscription>,
+    ) -> Result<(), AttachSubscriptionError> {
+        let name = &subscription.info.name;
+        if self.subscriptions.contains_key(&name) {
+            return Ok(());
         }
 
-        self.messages.append(&mut messages);
-        Ok(PublishMessagesResponse { message_ids })
+        self.subscriptions.insert(name.clone(), subscription);
+        Ok(())
     }
 }

@@ -117,6 +117,8 @@ async fn test_list() {
     server.dispose().await;
 }
 
+// Actors: Creating took 244.654333ms, Getting page 2 took 2.243458ms
+// RwLock: Creating took 222.814875ms, Getting page 2 took 2.857791ms
 // #[tokio::test]
 // async fn test_list_bench() {
 //     let mut server = TestHost::start().await.unwrap();
