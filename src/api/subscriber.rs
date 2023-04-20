@@ -9,13 +9,14 @@ use crate::pubsub_proto::{
     UpdateSubscriptionRequest,
 };
 use crate::subscriptions::subscription_manager::SubscriptionManager;
-use crate::subscriptions::{CreateSubscriptionError, GetSubscriptionError};
+use crate::subscriptions::{CreateSubscriptionError, GetSubscriptionError, ListSubscriptionsError};
 use crate::topics::topic_manager::TopicManager;
 use crate::topics::GetTopicError;
 use futures::Stream;
 use std::pin::Pin;
 use std::sync::Arc;
 use tonic::{Request, Response, Status, Streaming};
+use crate::api::page_token::PageToken;
 
 pub struct SubscriberService {
     topic_manager: Arc<TopicManager>,
@@ -105,9 +106,45 @@ impl Subscriber for SubscriberService {
 
     async fn list_subscriptions(
         &self,
-        _request: Request<ListSubscriptionsRequest>,
+        request: Request<ListSubscriptionsRequest>,
     ) -> Result<Response<ListSubscriptionsResponse>, Status> {
-        todo!()
+        let request = request.get_ref();
+        let page_token_value = if request.page_token.is_empty() {
+            None
+        } else {
+            let decoded = PageToken::try_decode(&request.page_token)
+                .ok_or_else(|| Status::invalid_argument("Page token malformed"))?;
+            Some(decoded)
+        };
+
+        let page_size = request
+            .page_size
+            .try_into()
+            .map_err(|_| Status::invalid_argument("Not a valid page size"))?;
+
+        let page = self
+            .subscription_manager
+            .list_subscriptions_in_project(
+                Box::from(request.project.clone()),
+                page_size,
+                page_token_value.map(|v| v.value),
+            )
+            .map_err(|e| match e {
+                ListSubscriptionsError::Closed => Status::internal("System is shutting down"),
+            })?;
+
+        let subscriptions = page
+            .subscriptions
+            .into_iter()
+            .map(|s| map_to_subscription_resource(&s))
+            .collect();
+
+        let page_token = page.offset.map(|v| PageToken::new(v).encode());
+        let response = ListSubscriptionsResponse {
+            subscriptions,
+            next_page_token: page_token.unwrap_or(String::default()),
+        };
+        Ok(Response::new(response))
     }
 
     async fn delete_subscription(
