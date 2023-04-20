@@ -1,9 +1,9 @@
 use std::fmt::{Display, Formatter};
 
 const PROJECT_PREFIX: &'static str = "projects/";
-const TOPIC_PREFIX: &'static str = "/subscriptions/";
+const SUBSCRIPTION_PREFIX: &'static str = "/subscriptions/";
 const PROJECT_PREFIX_LEN: usize = PROJECT_PREFIX.len();
-const TOPIC_PREFIX_LEN: usize = TOPIC_PREFIX.len();
+const SUBSCRIPTION_PREFIX_LEN: usize = SUBSCRIPTION_PREFIX.len();
 
 /// A `SubscriptionName` contains the project and the subscription.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -25,7 +25,7 @@ impl SubscriptionName {
     pub fn try_parse(unparsed: &str) -> Option<Self> {
         // Check that the length of the input is at least as long as something that contains
         // a valid subscription name.
-        if unparsed.len() <= PROJECT_PREFIX_LEN + TOPIC_PREFIX_LEN + 2 {
+        if unparsed.len() <= PROJECT_PREFIX_LEN + SUBSCRIPTION_PREFIX_LEN + 2 {
             return None;
         }
 
@@ -39,7 +39,7 @@ impl SubscriptionName {
         let project_id = project_id.get(..project_id.find('/')?)?;
 
         // Extract the subscription ID
-        let start = PROJECT_PREFIX_LEN + project_id.len() + TOPIC_PREFIX_LEN;
+        let start = PROJECT_PREFIX_LEN + project_id.len() + SUBSCRIPTION_PREFIX_LEN;
         let subscription_id = unparsed.get(start..).map(|s| s.trim_matches('/'))?;
 
         Some(SubscriptionName {
@@ -65,7 +65,7 @@ impl Display for SubscriptionName {
         write!(
             f,
             "{}{}{}{}",
-            PROJECT_PREFIX, self.project_id, TOPIC_PREFIX, self.subscription_id
+            PROJECT_PREFIX, self.project_id, SUBSCRIPTION_PREFIX, self.subscription_id
         )
     }
 }
