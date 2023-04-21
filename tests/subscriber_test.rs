@@ -1,12 +1,11 @@
-use deltio::pubsub_proto::{GetSubscriptionRequest, ListSubscriptionsRequest, Subscription, Topic};
+use deltio::pubsub_proto::{GetSubscriptionRequest, ListSubscriptionsRequest};
 use deltio::subscriptions::SubscriptionName;
 use deltio::topics::TopicName;
-
 use test_helpers::*;
 use tonic::Code;
 use uuid::Uuid;
 
-mod test_helpers;
+pub mod test_helpers;
 
 #[tokio::test]
 async fn test_subscription_management() {
@@ -14,25 +13,16 @@ async fn test_subscription_management() {
 
     // Create a topic to subscribe to.
     let topic_name = TopicName::new("test", "publishing");
-    server
-        .publisher
-        .create_topic(Topic {
-            name: topic_name.to_string(),
-            labels: Default::default(),
-            message_storage_policy: None,
-            kms_key_name: "".to_string(),
-            schema_settings: None,
-            satisfies_pzs: false,
-            message_retention_duration: None,
-        })
-        .await
-        .unwrap();
+    server.create_topic_with_name(&topic_name).await;
 
     // Create a subscription
     let subscription_name = SubscriptionName::new("test", "subscribing");
     let subscription = server
         .subscriber
-        .create_subscription(map_to_resource(&subscription_name, &topic_name))
+        .create_subscription(map_to_subscription_resource(
+            &subscription_name,
+            &topic_name,
+        ))
         .await
         .unwrap();
 
@@ -61,26 +51,17 @@ async fn test_enforce_same_project() {
 
     // Create a topic to subscribe to.
     let topic_name = TopicName::new("one", "publishing");
-    server
-        .publisher
-        .create_topic(Topic {
-            name: topic_name.to_string(),
-            labels: Default::default(),
-            message_storage_policy: None,
-            kms_key_name: "".to_string(),
-            schema_settings: None,
-            satisfies_pzs: false,
-            message_retention_duration: None,
-        })
-        .await
-        .unwrap();
+    server.create_topic_with_name(&topic_name).await;
 
     // Create a subscription, this should fail because it's a different project.
     let subscription_name = SubscriptionName::new("two", "subscribing");
 
     let status = server
         .subscriber
-        .create_subscription(map_to_resource(&subscription_name, &topic_name))
+        .create_subscription(map_to_subscription_resource(
+            &subscription_name,
+            &topic_name,
+        ))
         .await
         .unwrap_err();
 
@@ -98,29 +79,23 @@ async fn test_list() {
     let subscription_name2 = SubscriptionName::new("test", &Uuid::new_v4().to_string());
 
     // Create the topic.
-    server
-        .publisher
-        .create_topic(Topic {
-            name: topic_name.to_string(),
-            labels: Default::default(),
-            message_storage_policy: None,
-            kms_key_name: "".to_string(),
-            schema_settings: None,
-            satisfies_pzs: false,
-            message_retention_duration: None,
-        })
-        .await
-        .unwrap();
+    server.create_topic_with_name(&topic_name).await;
 
     // Create the subscriptions.
     server
         .subscriber
-        .create_subscription(map_to_resource(&subscription_name1, &topic_name))
+        .create_subscription(map_to_subscription_resource(
+            &subscription_name1,
+            &topic_name,
+        ))
         .await
         .unwrap();
     server
         .subscriber
-        .create_subscription(map_to_resource(&subscription_name2, &topic_name))
+        .create_subscription(map_to_subscription_resource(
+            &subscription_name2,
+            &topic_name,
+        ))
         .await
         .unwrap();
 
@@ -187,26 +162,4 @@ async fn test_list() {
         "the page token should not be returned"
     );
     server.dispose().await;
-}
-
-fn map_to_resource(subscription_name: &SubscriptionName, topic_name: &TopicName) -> Subscription {
-    Subscription {
-        name: subscription_name.to_string(),
-        topic: topic_name.to_string(),
-        push_config: None,
-        bigquery_config: None,
-        ack_deadline_seconds: 0,
-        retain_acked_messages: false,
-        message_retention_duration: None,
-        labels: Default::default(),
-        enable_message_ordering: false,
-        expiration_policy: None,
-        filter: "".to_string(),
-        dead_letter_policy: None,
-        retry_policy: None,
-        detached: false,
-        enable_exactly_once_delivery: false,
-        topic_message_retention_duration: None,
-        state: 0,
-    }
 }

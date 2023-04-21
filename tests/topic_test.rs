@@ -1,12 +1,10 @@
-use deltio::pubsub_proto::publisher_client::PublisherClient;
 use deltio::pubsub_proto::{GetTopicRequest, ListTopicsRequest, Topic};
 use deltio::topics::TopicName;
 use std::collections::HashMap;
 use test_helpers::*;
-use tonic::transport::Channel;
 use uuid::Uuid;
 
-mod test_helpers;
+pub mod test_helpers;
 
 #[tokio::test]
 async fn test_create_and_get() {
@@ -55,8 +53,8 @@ async fn test_list() {
     let topic_name2 = TopicName::new("test", &Uuid::new_v4().to_string());
 
     // Create the topic.
-    create_topic(&mut server.publisher, &topic_name1).await;
-    create_topic(&mut server.publisher, &topic_name2).await;
+    server.create_topic_with_name(&topic_name1).await;
+    server.create_topic_with_name(&topic_name2).await;
 
     // List the topics that were created.
     let list_response = server
@@ -166,21 +164,3 @@ async fn test_list() {
 //
 //     server.dispose().await;
 // }
-
-/// Helper for creating a topic.
-async fn create_topic(publisher: &mut PublisherClient<Channel>, name: &TopicName) -> Topic {
-    let topic_input = Topic {
-        name: name.to_string(),
-        labels: HashMap::default(),
-        message_storage_policy: None,
-        kms_key_name: String::default(),
-        schema_settings: None,
-        satisfies_pzs: false,
-        message_retention_duration: None,
-    };
-
-    let topic_output = publisher.create_topic(topic_input.clone()).await.unwrap();
-
-    let topic_output = topic_output.get_ref();
-    topic_output.clone()
-}

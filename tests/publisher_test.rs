@@ -1,9 +1,9 @@
-use deltio::pubsub_proto::{PublishRequest, PubsubMessage, Topic};
+use deltio::pubsub_proto::{PublishRequest, PubsubMessage};
 use deltio::topics::TopicName;
 use std::collections::HashMap;
 use test_helpers::*;
 
-mod test_helpers;
+pub mod test_helpers;
 
 #[tokio::test]
 async fn test_publish() {
@@ -11,19 +11,7 @@ async fn test_publish() {
 
     // Create a topic to publish to.
     let topic_name = TopicName::new("test", "publishing");
-    server
-        .publisher
-        .create_topic(Topic {
-            name: topic_name.to_string(),
-            labels: Default::default(),
-            message_storage_policy: None,
-            kms_key_name: "".to_string(),
-            schema_settings: None,
-            satisfies_pzs: false,
-            message_retention_duration: None,
-        })
-        .await
-        .unwrap();
+    server.create_topic_with_name(&topic_name).await;
 
     // Publish some messages.
     let message1 = PubsubMessage {

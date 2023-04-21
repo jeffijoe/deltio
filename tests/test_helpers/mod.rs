@@ -1,6 +1,9 @@
 use deltio::make_server_builder;
 use deltio::pubsub_proto::publisher_client::PublisherClient;
 use deltio::pubsub_proto::subscriber_client::SubscriberClient;
+use deltio::pubsub_proto::{Subscription, Topic};
+use deltio::subscriptions::SubscriptionName;
+use deltio::topics::TopicName;
 use tokio::net::{UnixListener, UnixStream};
 use tokio_stream::wrappers::UnixListenerStream;
 use tonic::transport::{Channel, Endpoint};
@@ -88,5 +91,54 @@ impl TestHost {
     pub async fn dispose(self) {
         self.shutdown_send.send(()).unwrap();
         self.server_join_handle.await.unwrap();
+    }
+
+    /// Creates a new topic with the given name.
+    pub async fn create_topic_with_name(&mut self, topic_name: &TopicName) -> Topic {
+        let response = self
+            .publisher
+            .create_topic(map_to_topic_resource(&topic_name))
+            .await
+            .unwrap();
+        response.get_ref().clone()
+    }
+}
+
+/// Maps the given parameters to a `Topic` resource.
+pub fn map_to_topic_resource(topic_name: &TopicName) -> Topic {
+    Topic {
+        name: topic_name.to_string(),
+        labels: Default::default(),
+        message_storage_policy: None,
+        kms_key_name: "".to_string(),
+        schema_settings: None,
+        satisfies_pzs: false,
+        message_retention_duration: None,
+    }
+}
+
+/// Maps the given parameters to a `Subscription` resource.
+pub fn map_to_subscription_resource(
+    subscription_name: &SubscriptionName,
+    topic_name: &TopicName,
+) -> Subscription {
+    Subscription {
+        name: subscription_name.to_string(),
+        topic: topic_name.to_string(),
+        push_config: None,
+        bigquery_config: None,
+        ack_deadline_seconds: 0,
+        retain_acked_messages: false,
+        message_retention_duration: None,
+        labels: Default::default(),
+        enable_message_ordering: false,
+        expiration_policy: None,
+        filter: "".to_string(),
+        dead_letter_policy: None,
+        retry_policy: None,
+        detached: false,
+        enable_exactly_once_delivery: false,
+        topic_message_retention_duration: None,
+        state: 0,
     }
 }
