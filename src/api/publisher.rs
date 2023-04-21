@@ -38,9 +38,10 @@ impl Publisher for PublisherService {
     async fn create_topic(&self, request: Request<Topic>) -> Result<Response<Topic>, Status> {
         let request = request.get_ref();
         let topic_name = parser::parse_topic_name(&request.name)?;
+        let topic_name_str = topic_name.to_string();
 
         self.topic_manager
-            .create_topic(topic_name.clone())
+            .create_topic(topic_name)
             .map_err(|e| match e {
                 CreateTopicError::AlreadyExists => Status::already_exists("Topic already exists"),
                 // TODO: Figure out a more generic way to handle this.
@@ -48,7 +49,7 @@ impl Publisher for PublisherService {
             })?;
 
         let response = Topic {
-            name: topic_name.to_string(),
+            name: topic_name_str,
             kms_key_name: String::default(),
             labels: HashMap::default(),
             message_retention_duration: None,

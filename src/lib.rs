@@ -20,8 +20,7 @@ pub fn make_server_builder() -> Router {
     let subscription_manager = Arc::new(SubscriptionManager::new());
 
     let publisher_service = PublisherService::new(topic_manager.clone());
-    let subscriber_service =
-        SubscriberService::new(topic_manager.clone(), subscription_manager.clone());
+    let subscriber_service = SubscriberService::new(topic_manager, subscription_manager.clone());
 
     Server::builder()
         .add_service(PublisherServer::new(publisher_service))

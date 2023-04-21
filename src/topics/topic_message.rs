@@ -67,5 +67,6 @@ mod test {
     fn display() {
         assert_eq!("1", MessageId::new(0, 1).to_string());
         assert_eq!("4294967298", MessageId::new(1, 2).to_string());
+        assert_eq!("4294967299", MessageId::new(1, 3).to_string());
     }
 }

@@ -1,6 +1,7 @@
 use crate::subscriptions::{Subscription, SubscriptionName};
 use crate::topics::topic_message::{MessageId, TopicMessage};
 use crate::topics::{AttachSubscriptionError, PublishMessagesError};
+use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::SystemTime;
@@ -110,12 +111,11 @@ impl TopicActor {
         &mut self,
         subscription: Arc<Subscription>,
     ) -> Result<(), AttachSubscriptionError> {
-        let name = &subscription.info.name;
-        if self.subscriptions.contains_key(&name) {
-            return Ok(());
+        // Insert the subscription.
+        if let Entry::Vacant(entry) = self.subscriptions.entry(subscription.info.name.clone()) {
+            entry.insert(subscription);
         }
 
-        self.subscriptions.insert(name.clone(), subscription);
         Ok(())
     }
 }
