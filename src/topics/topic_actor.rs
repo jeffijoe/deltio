@@ -1,4 +1,4 @@
-use crate::subscriptions::{Subscription, SubscriptionName};
+use crate::subscriptions::{PostMessagesError, Subscription, SubscriptionName};
 use crate::topics::topic_message::{MessageId, TopicMessage};
 use crate::topics::{AttachSubscriptionError, PublishMessagesError};
 use std::collections::hash_map::Entry;
@@ -67,7 +67,7 @@ impl TopicActor {
                 messages,
                 responder,
             } => {
-                let result = self.publish_messages(messages);
+                let result = self.publish_messages(messages).await;
                 let _ = responder.send(result);
             }
 
@@ -81,7 +81,7 @@ impl TopicActor {
         }
     }
 
-    fn publish_messages(
+    async fn publish_messages(
         &mut self,
         messages: Vec<TopicMessage>,
     ) -> Result<PublishMessagesResponse, PublishMessagesError> {
@@ -94,16 +94,48 @@ impl TopicActor {
         // Ensure we have capacity.
         self.messages.reserve(messages.len());
 
-        // Mark the messages as published and add them to the topic.
-        self.messages.extend(messages.into_iter().map(|mut m| {
-            self.next_message_id += 1;
-            let message_id = MessageId::new(self.topic_internal_id, self.next_message_id);
-            m.publish(message_id, publish_time);
-            message_ids.push(message_id);
+        // Mark the messages as published.
+        let messages = messages
+            .into_iter()
+            .map(|mut m| {
+                self.next_message_id += 1;
+                let message_id = MessageId::new(self.topic_internal_id, self.next_message_id);
+                m.publish(message_id, publish_time);
+                message_ids.push(message_id);
 
-            Arc::new(m)
-        }));
+                Arc::new(m)
+            })
+            .collect::<Vec<_>>();
 
+        // Add them to the topic.
+        self.messages.extend(messages.iter().map(|m| Arc::clone(m)));
+
+        // Post them to all subscriptions.
+        let mut set = tokio::task::JoinSet::new();
+        for subscription in self.subscriptions.values().cloned() {
+            // Spawn a future to post messages to each subscription.
+            set.spawn({
+                // It's unfortunate that we need to clone the vec here, but since it contains
+                // references only it should be ok.
+                let messages = messages.clone();
+
+                // This moves the clones into the future so the borrow checker doesn't yell at us.
+                async move { subscription.post_messages(messages).await }
+            });
+        }
+
+        // Wait for all the tasks to complete.
+        while let Some(task) = set.join_next().await {
+            // Handle any errors at the Tokio level.
+            let result = task.unwrap_or(Err(PostMessagesError::Closed));
+
+            // Handle errors from posting the messages.
+            result.map_err(|e| match e {
+                PostMessagesError::Closed => PublishMessagesError::Closed,
+            })?;
+        }
+
+        // Return the list of message IDs that we published.
         Ok(PublishMessagesResponse { message_ids })
     }
 

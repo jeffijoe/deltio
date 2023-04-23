@@ -1,4 +1,5 @@
 mod api;
+mod collections;
 pub mod pubsub_proto;
 pub mod subscriptions;
 pub mod topics;

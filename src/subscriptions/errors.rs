@@ -28,12 +28,16 @@ pub enum ListSubscriptionsError {
     Closed,
 }
 
-/// Errors for publishing messages.
+/// Errors for posting messages.
 #[derive(thiserror::Error, Debug)]
-pub enum PublishMessagesError {
-    #[error("The subscription does not exist")]
-    SubscriptionDoesNotExist,
+pub enum PostMessagesError {
+    #[error("The subscription is closed")]
+    Closed,
+}
 
+/// Errors for pulling messages.
+#[derive(thiserror::Error, Debug)]
+pub enum PullMessagesError {
     #[error("The subscription is closed")]
     Closed,
 }
