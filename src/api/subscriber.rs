@@ -1,22 +1,26 @@
+use crate::api::page_token::PageToken;
 use crate::api::parser;
 use crate::pubsub_proto::subscriber_server::Subscriber;
 use crate::pubsub_proto::{
     AcknowledgeRequest, CreateSnapshotRequest, DeleteSnapshotRequest, DeleteSubscriptionRequest,
     GetSnapshotRequest, GetSubscriptionRequest, ListSnapshotsRequest, ListSnapshotsResponse,
     ListSubscriptionsRequest, ListSubscriptionsResponse, ModifyAckDeadlineRequest,
-    ModifyPushConfigRequest, PullRequest, PullResponse, SeekRequest, SeekResponse, Snapshot,
-    StreamingPullRequest, StreamingPullResponse, Subscription, UpdateSnapshotRequest,
-    UpdateSubscriptionRequest,
+    ModifyPushConfigRequest, PubsubMessage, PullRequest, PullResponse, ReceivedMessage,
+    SeekRequest, SeekResponse, Snapshot, StreamingPullRequest, StreamingPullResponse, Subscription,
+    UpdateSnapshotRequest, UpdateSubscriptionRequest,
 };
 use crate::subscriptions::subscription_manager::SubscriptionManager;
-use crate::subscriptions::{CreateSubscriptionError, GetSubscriptionError, ListSubscriptionsError};
+use crate::subscriptions::{
+    AckId, AckIdParseError, AcknowledgeMessagesError, CreateSubscriptionError,
+    GetSubscriptionError, ListSubscriptionsError, PullMessagesError,
+};
 use crate::topics::topic_manager::TopicManager;
 use crate::topics::GetTopicError;
 use futures::Stream;
 use std::pin::Pin;
 use std::sync::Arc;
+use tokio_stream::StreamExt;
 use tonic::{Request, Response, Status, Streaming};
-use crate::api::page_token::PageToken;
 
 pub struct SubscriberService {
     topic_manager: Arc<TopicManager>,
@@ -173,13 +177,89 @@ impl Subscriber for SubscriberService {
     }
 
     type StreamingPullStream =
-        Pin<Box<dyn Stream<Item = Result<StreamingPullResponse, Status>> + Send + Sync + 'static>>;
+        Pin<Box<dyn Stream<Item = Result<StreamingPullResponse, Status>> + Send + 'static>>;
 
     async fn streaming_pull(
         &self,
-        _request: Request<Streaming<StreamingPullRequest>>,
+        request: Request<Streaming<StreamingPullRequest>>,
     ) -> Result<Response<Self::StreamingPullStream>, Status> {
-        todo!()
+        let mut stream = request.into_inner();
+        let subscription_manager = Arc::clone(&self.subscription_manager);
+
+        let request = match stream.next().await {
+            None => return Err(Status::cancelled("The request was canceled")),
+            Some(req) => req?,
+        };
+
+        let subscription_name = parser::parse_subscription_name(&request.subscription)?;
+        let subscription = subscription_manager
+            .get_subscription(&subscription_name)
+            .map_err(|e| match e {
+                GetSubscriptionError::DoesNotExist => Status::not_found(format!(
+                    "The subscription {} does not exist",
+                    &subscription_name
+                )),
+                GetSubscriptionError::Closed => Status::internal("System is shutting down"),
+            })?;
+
+        // Pulls messages and streams them to the client.
+        let messages_stream = {
+            let subscription = Arc::clone(&subscription);
+            async_stream::try_stream! {
+                loop {
+                    let signal = subscription.new_messages_signal();
+                    let pulled = match subscription.pull_messages(10).await {
+                        Err(PullMessagesError::Closed) => return,
+                        Ok(pulled) => pulled
+                    };
+
+                    let received_messages = pulled.into_iter().map(|m| ReceivedMessage {
+                        ack_id: m.ack_id().to_string(),
+                        delivery_attempt: m.delivery_attempt() as i32,
+                        message: {
+                            let message = m.message();
+                            Some(PubsubMessage {
+                                attributes: Default::default(),
+                                publish_time: Some(prost_types::Timestamp::from(message.published_at)),
+                                ordering_key: String::default(),
+                                message_id: message.id.to_string(),
+                                data: message.data.to_vec()
+                            })
+                        }
+                    }).collect::<Vec<_>>();
+
+                    if received_messages.len() > 0 {
+                        yield StreamingPullResponse {
+                            received_messages,
+                            acknowledge_confirmation: None,
+                            modify_ack_deadline_confirmation: None,
+                            subscription_properties: None
+                        }
+                    }
+
+                    // Wait for the next signal.
+                    signal.await;
+                }
+            }
+        };
+
+        // Handles requests from the client after the initial request.
+        let control_stream = {
+            let subscription = Arc::clone(&subscription);
+            async_stream::try_stream! {
+                while let Some(request) = stream.next().await {
+                    let request = request?;
+                    if let Some(response) = handle_streaming_pull_request(request, Arc::clone(&subscription)).await? {
+                        yield response;
+                    }
+                }
+            }
+        };
+
+        // Merge both streams.
+        let output = messages_stream.merge(control_stream);
+
+        Ok(Response::new(Box::pin(output) as Self::StreamingPullStream))
     }
 
     async fn modify_push_config(
@@ -227,6 +307,59 @@ impl Subscriber for SubscriberService {
     async fn seek(&self, _request: Request<SeekRequest>) -> Result<Response<SeekResponse>, Status> {
         todo!()
     }
+}
+
+/// Handles the control message for a streaming pull request.    
+async fn handle_streaming_pull_request(
+    request: StreamingPullRequest,
+    subscription: Arc<crate::subscriptions::Subscription>,
+) -> Result<Option<StreamingPullResponse>, Status> {
+    if !request.subscription.is_empty() {
+        return Err(Status::invalid_argument(
+            "subscription must only be specified in the initial request.",
+        ));
+    }
+
+    if request.max_outstanding_bytes > 0 {
+        return Err(Status::invalid_argument(
+            "max_outstanding_bytes must only be specified in the initial request.",
+        ));
+    }
+
+    if request.max_outstanding_messages > 0 {
+        return Err(Status::invalid_argument(
+            "max_outstanding_messages must only be specified in the initial request.",
+        ));
+    }
+
+    if request.modify_deadline_seconds.len() != request.modify_deadline_ack_ids.len() {
+        return Err(Status::invalid_argument(
+            "modify_deadline_seconds and modify_deadline_ack_ids must be the same length",
+        ));
+    }
+
+    // Ack messages if appropriate.
+    if request.ack_ids.len() > 0 {
+        // Wishing we had `traverse` and `sequence`. Oh well.
+        let mut ack_ids = Vec::with_capacity(request.ack_ids.len());
+        for ack_id in request.ack_ids {
+            let ack_id = AckId::parse(&ack_id).map_err(|e| match e {
+                AckIdParseError::Malformed => {
+                    Status::invalid_argument(format!("ack_id '{}' was malformed", &ack_id))
+                }
+            })?;
+            ack_ids.push(ack_id);
+        }
+
+        subscription
+            .acknowledge_messages(ack_ids)
+            .await
+            .map_err(|e| match e {
+                AcknowledgeMessagesError::Closed => Status::cancelled("System is shutting down"),
+            })?;
+    }
+
+    Ok(None)
 }
 
 fn map_to_subscription_resource(subscription: &crate::subscriptions::Subscription) -> Subscription {

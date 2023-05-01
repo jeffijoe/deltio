@@ -41,3 +41,17 @@ pub enum PullMessagesError {
     #[error("The subscription is closed")]
     Closed,
 }
+
+/// Errors for acknowledging messages.
+#[derive(thiserror::Error, Debug)]
+pub enum AcknowledgeMessagesError {
+    #[error("The subscription is closed")]
+    Closed,
+}
+
+/// Errors for getting stats.
+#[derive(thiserror::Error, Debug)]
+pub enum GetStatsError {
+    #[error("The subscription is closed")]
+    Closed,
+}

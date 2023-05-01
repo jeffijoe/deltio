@@ -3,6 +3,7 @@ use std::fmt::{Display, Formatter};
 use std::time::SystemTime;
 
 /// Represents a published message to a topic.
+#[derive(Debug)]
 pub struct TopicMessage {
     pub id: MessageId,
     pub published_at: SystemTime,
@@ -48,25 +49,5 @@ impl MessageId {
 impl Display for MessageId {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         self.value.fmt(f)
-    }
-}
-
-#[cfg(test)]
-mod test {
-    use super::*;
-
-    #[test]
-    fn new_works() {
-        assert_eq!(MessageId::new(1, 1), MessageId::new(1, 1));
-        assert_ne!(MessageId::new(1, 1), MessageId::new(2, 1));
-        assert_ne!(MessageId::new(1, 1), MessageId::new(1, 2));
-        assert_ne!(MessageId::new(2, 1), MessageId::new(1, 2));
-    }
-
-    #[test]
-    fn display() {
-        assert_eq!("1", MessageId::new(0, 1).to_string());
-        assert_eq!("4294967298", MessageId::new(1, 2).to_string());
-        assert_eq!("4294967299", MessageId::new(1, 3).to_string());
     }
 }

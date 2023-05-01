@@ -1,6 +1,9 @@
-use deltio::pubsub_proto::{GetSubscriptionRequest, ListSubscriptionsRequest};
+use deltio::pubsub_proto::{
+    GetSubscriptionRequest, ListSubscriptionsRequest, StreamingPullRequest,
+};
 use deltio::subscriptions::SubscriptionName;
 use deltio::topics::TopicName;
+use futures::StreamExt;
 use test_helpers::*;
 use tonic::Code;
 use uuid::Uuid;
@@ -162,4 +165,58 @@ async fn test_list() {
         "the page token should not be returned"
     );
     server.dispose().await;
+}
+
+#[tokio::test]
+async fn test_streaming_pull() {
+    let mut server = TestHost::start().await.unwrap();
+
+    // Create a topic to subscribe to.
+    let topic_name = TopicName::new("test", "topic");
+    server.create_topic_with_name(&topic_name).await;
+
+    // Create a subscription.
+    let subscription_name = SubscriptionName::new("test", "subscription");
+    server
+        .create_subscription_with_name(&topic_name, &subscription_name)
+        .await;
+
+    // Start polling for messages.
+    let (sender, mut inbound) = server.streaming_pull(&subscription_name).await;
+
+    // Publish some messages, wait for them to be retrieved.
+    server
+        .publish_text_messages(&topic_name, vec!["Hello".into(), "World".into()])
+        .await;
+
+    let pull_response = inbound.next().await.unwrap().unwrap();
+    assert_eq!(pull_response.received_messages.len(), 2);
+
+    sender
+        .send(StreamingPullRequest {
+            subscription: Default::default(),
+            ack_ids: pull_response
+                .received_messages
+                .iter()
+                .map(|r| r.ack_id.clone())
+                .collect(),
+            modify_deadline_seconds: vec![],
+            modify_deadline_ack_ids: vec![],
+            stream_ack_deadline_seconds: 0,
+            client_id: Default::default(),
+            max_outstanding_messages: 0,
+            max_outstanding_bytes: 0,
+        })
+        .await
+        .unwrap();
+
+    // Publish more messages and wait again.
+    server
+        .publish_text_messages(&topic_name, vec!["Deltio".into()])
+        .await;
+
+    let pull_response = inbound.next().await.unwrap().unwrap();
+    assert_eq!(pull_response.received_messages.len(), 1);
+    let message = pull_response.received_messages[0].message.clone().unwrap();
+    assert_eq!(String::from_utf8(message.data).unwrap(), "Deltio");
 }

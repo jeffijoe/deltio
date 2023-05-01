@@ -1,12 +1,16 @@
 use deltio::make_server_builder;
 use deltio::pubsub_proto::publisher_client::PublisherClient;
 use deltio::pubsub_proto::subscriber_client::SubscriberClient;
-use deltio::pubsub_proto::{Subscription, Topic};
+use deltio::pubsub_proto::{
+    PublishRequest, PubsubMessage, StreamingPullRequest, StreamingPullResponse, Subscription, Topic,
+};
 use deltio::subscriptions::SubscriptionName;
 use deltio::topics::TopicName;
 use tokio::net::{UnixListener, UnixStream};
+use tokio::sync::mpsc::Sender;
 use tokio_stream::wrappers::UnixListenerStream;
 use tonic::transport::{Channel, Endpoint};
+use tonic::Streaming;
 use tower::service_fn;
 use uuid::Uuid;
 
@@ -101,6 +105,88 @@ impl TestHost {
             .await
             .unwrap();
         response.get_ref().clone()
+    }
+
+    /// Creates a subscription with the given name for the specified topic.
+    pub async fn create_subscription_with_name(
+        &mut self,
+        topic_name: &TopicName,
+        subscription_name: &SubscriptionName,
+    ) -> Subscription {
+        let response = self
+            .subscriber
+            .create_subscription(map_to_subscription_resource(
+                &subscription_name,
+                &topic_name,
+            ))
+            .await
+            .unwrap();
+        response.get_ref().clone()
+    }
+
+    /// Publishes the given messages
+    pub async fn publish_text_messages(
+        &mut self,
+        topic_name: &TopicName,
+        messages: Vec<String>,
+    ) -> Vec<String> {
+        let response = self
+            .publisher
+            .publish(PublishRequest {
+                topic: topic_name.to_string(),
+                messages: messages
+                    .iter()
+                    .map(|content| PubsubMessage {
+                        publish_time: None,
+                        attributes: Default::default(),
+                        message_id: Default::default(),
+                        ordering_key: Default::default(),
+                        data: content.as_bytes().to_vec(),
+                    })
+                    .collect(),
+            })
+            .await
+            .unwrap();
+        let response = response.get_ref();
+        response.message_ids.clone()
+    }
+
+    pub async fn streaming_pull(
+        &mut self,
+        subscription_name: &SubscriptionName,
+    ) -> (
+        Sender<StreamingPullRequest>,
+        Streaming<StreamingPullResponse>,
+    ) {
+        let client_id = Uuid::new_v4().to_string();
+        let (send_request, mut outgoing) = tokio::sync::mpsc::channel::<StreamingPullRequest>(100);
+        let subscription = subscription_name.to_string();
+        let response = self
+            .subscriber
+            .streaming_pull(async_stream::stream! {
+                // Sends the initial request to connect to the subscription.
+                yield StreamingPullRequest {
+                    subscription,
+                    ack_ids: vec![],
+                    modify_deadline_seconds: vec![],
+                    modify_deadline_ack_ids: vec![],
+                    stream_ack_deadline_seconds: 0,
+                    client_id: client_id,
+                    // TODO: Respect these
+                    max_outstanding_messages: 100,
+                    max_outstanding_bytes: 100_000_000,
+                };
+
+                // Deliver each request from the channel.
+                while let Some(request) = outgoing.recv().await {
+                    yield request;
+                }
+            })
+            .await
+            .unwrap();
+
+        let inbound = response.into_inner();
+        (send_request, inbound)
     }
 }
 

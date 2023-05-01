@@ -1,5 +1,8 @@
 use crate::subscriptions::subscription_actor::{SubscriptionActor, SubscriptionRequest};
-use crate::subscriptions::{PostMessagesError, PullMessagesError, PulledMessage, SubscriptionName};
+use crate::subscriptions::{
+    AckId, AcknowledgeMessagesError, GetStatsError, PostMessagesError, PullMessagesError,
+    PulledMessage, SubscriptionName, SubscriptionStats,
+};
 use crate::topics::{Topic, TopicMessage};
 use std::cmp::Ordering;
 use std::sync::Arc;
@@ -36,7 +39,7 @@ impl Subscription {
         let on_new_messages = Arc::new(Notify::new());
 
         // Create the actor and pass in a callback for notifying on new messages.
-        let sender = SubscriptionActor::start(topic.clone(), {
+        let sender = SubscriptionActor::start(info.clone(), topic.clone(), {
             let on_new_messages = on_new_messages.clone();
             move || {
                 on_new_messages.notify_waiters();
@@ -53,7 +56,8 @@ impl Subscription {
 
     /// Returns a signal for new messages.
     /// When new messages arrive, any waiters of the signal will be
-    /// notified.
+    /// notified. The signal will be subscribed to immediately, so the time at which
+    /// this method is called is important.
     pub fn new_messages_signal(&self) -> Notified<'_> {
         self.on_new_messages.notified()
     }
@@ -85,6 +89,29 @@ impl Subscription {
             })
             .await
             .map_err(|_| PostMessagesError::Closed)
+    }
+
+    /// Acknowledges messages.
+    pub async fn acknowledge_messages(
+        &self,
+        ack_ids: Vec<AckId>,
+    ) -> Result<(), AcknowledgeMessagesError> {
+        let (responder, recv) = oneshot::channel();
+        self.sender
+            .send(SubscriptionRequest::AcknowledgeMessages { ack_ids, responder })
+            .await
+            .map_err(|_| AcknowledgeMessagesError::Closed)?;
+        recv.await.map_err(|_| AcknowledgeMessagesError::Closed)?
+    }
+
+    /// Gets stats for the subscription.
+    pub async fn get_stats(&self) -> Result<SubscriptionStats, GetStatsError> {
+        let (responder, recv) = oneshot::channel();
+        self.sender
+            .send(SubscriptionRequest::GetStats { responder })
+            .await
+            .map_err(|_| GetStatsError::Closed)?;
+        recv.await.map_err(|_| GetStatsError::Closed)?
     }
 }
 
@@ -170,5 +197,25 @@ mod tests {
             pulled_messages[1].message().data,
             Bytes::from("can haz cheezburger?")
         );
+
+        // Pull again, the messages should not be returned again as they are outstanding.
+        assert_eq!(subscription.pull_messages(10).await.unwrap().len(), 0);
+
+        // Check the stats to verify that the messages are outstanding.
+        let stats = subscription.get_stats().await.unwrap();
+        assert_eq!(stats.outstanding_messages_count, 2);
+
+        // Acknowledge the messages.
+        subscription
+            .acknowledge_messages(pulled_messages.iter().map(|m| m.ack_id()).collect())
+            .await
+            .unwrap();
+
+        // Verify that pulling still does not return anything.
+        assert_eq!(subscription.pull_messages(10).await.unwrap().len(), 0);
+
+        // Verify that there are no more outstanding messages.
+        let stats = subscription.get_stats().await.unwrap();
+        assert_eq!(stats.outstanding_messages_count, 0);
     }
 }
