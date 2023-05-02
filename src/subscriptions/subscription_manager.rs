@@ -21,7 +21,7 @@ struct State {
 
 impl SubscriptionManager {
     /// Creates a new `SubscriptionManager`.
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             state: RwLock::new(State::new()),
         }
@@ -62,8 +62,8 @@ impl SubscriptionManager {
         let state = self.state.read();
         state
             .subscriptions
-            .get(&name)
-            .map(|c| c.clone())
+            .get(name)
+            .cloned()
             .ok_or(GetSubscriptionError::DoesNotExist)
     }
 
@@ -74,10 +74,7 @@ impl SubscriptionManager {
         page_size: usize,
         page_offset: Option<usize>,
     ) -> Result<SubscriptionsPage, ListSubscriptionsError> {
-        let skip_value = match page_offset {
-            Some(v) => v,
-            None => 0,
-        };
+        let skip_value = page_offset.unwrap_or(0);
 
         // We need to collect them into a vec to sort.
         // NOTE: If this ever becomes a bottleneck, we can use another level
@@ -91,9 +88,8 @@ impl SubscriptionManager {
             let subscriptions = state
                 .subscriptions
                 .values()
-                .into_iter()
                 .filter(|t| t.info.name.is_in_project(&project_id))
-                .map(|t| t.clone())
+                .cloned()
                 .collect::<Vec<_>>();
             subscriptions
         };
@@ -114,7 +110,7 @@ impl SubscriptionManager {
             .collect::<Vec<_>>();
 
         // If we got at least one element, then we want to return a new offset.
-        let new_offset = if subscriptions_for_project.len() > 0 {
+        let new_offset = if !subscriptions_for_project.is_empty() {
             Some(skip_value + subscriptions_for_project.len())
         } else {
             None
@@ -146,11 +142,7 @@ impl State {
             let subscription_info = SubscriptionInfo::new(name);
             self.next_id += 1;
             let internal_id = self.next_id;
-            let subscription = Arc::new(Subscription::new(
-                subscription_info.clone(),
-                internal_id,
-                topic.clone(),
-            ));
+            let subscription = Arc::new(Subscription::new(subscription_info, internal_id, topic));
             entry.insert(subscription.clone());
             return Ok(subscription);
         }

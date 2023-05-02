@@ -108,12 +108,13 @@ impl TopicActor {
             .collect::<Vec<_>>();
 
         // Add them to the topic.
-        self.messages.extend(messages.iter().map(|m| Arc::clone(m)));
+        self.messages.extend(messages.iter().map(Arc::clone));
 
         // Post them to all subscriptions.
         let mut set = tokio::task::JoinSet::new();
-        for subscription in self.subscriptions.values().cloned() {
+        for subscription in self.subscriptions.values() {
             // Spawn a future to post messages to each subscription.
+            let subscription = Arc::clone(subscription);
             set.spawn({
                 // It's unfortunate that we need to clone the vec here, but since it contains
                 // references only it should be ok.

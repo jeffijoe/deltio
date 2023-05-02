@@ -1,7 +1,7 @@
 use std::fmt::{Display, Formatter};
 
-const PROJECT_PREFIX: &'static str = "projects/";
-const TOPIC_PREFIX: &'static str = "/topics/";
+const PROJECT_PREFIX: &str = "projects/";
+const TOPIC_PREFIX: &str = "/topics/";
 const PROJECT_PREFIX_LEN: usize = PROJECT_PREFIX.len();
 const TOPIC_PREFIX_LEN: usize = TOPIC_PREFIX.len();
 

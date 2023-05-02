@@ -49,6 +49,13 @@ pub enum AcknowledgeMessagesError {
     Closed,
 }
 
+/// Errors for modifying deadlines.
+#[derive(thiserror::Error, Debug)]
+pub enum ModifyDeadlineError {
+    #[error("The subscription is closed")]
+    Closed,
+}
+
 /// Errors for getting stats.
 #[derive(thiserror::Error, Debug)]
 pub enum GetStatsError {

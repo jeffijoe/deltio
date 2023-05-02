@@ -25,7 +25,7 @@ impl PublisherService {
         topic_name: &TopicName,
     ) -> Result<Arc<crate::topics::Topic>, Status> {
         self.topic_manager
-            .get_topic(&topic_name)
+            .get_topic(topic_name)
             .map_err(|e| match e {
                 GetTopicError::DoesNotExist => Status::failed_precondition("Topic does not exist"),
                 GetTopicError::Closed => Status::internal("System is shutting down"),

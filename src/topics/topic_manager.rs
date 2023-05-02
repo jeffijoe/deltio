@@ -20,7 +20,7 @@ struct State {
 
 impl TopicManager {
     /// Creates a new `TopicManager`.
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             state: RwLock::new(State::new()),
         }
@@ -37,8 +37,8 @@ impl TopicManager {
         let state = self.state.read();
         state
             .topics
-            .get(&name)
-            .map(|c| c.clone())
+            .get(name)
+            .cloned()
             .ok_or(GetTopicError::DoesNotExist)
     }
 
@@ -49,10 +49,7 @@ impl TopicManager {
         page_size: usize,
         page_offset: Option<usize>,
     ) -> Result<TopicsPage, ListTopicsError> {
-        let skip_value = match page_offset {
-            Some(v) => v,
-            None => 0,
-        };
+        let skip_value = page_offset.unwrap_or(0);
 
         // We need to collect them into a vec to sort.
         // NOTE: If this ever becomes a bottleneck, we can use another level
@@ -66,9 +63,8 @@ impl TopicManager {
             let topics = state
                 .topics
                 .values()
-                .into_iter()
                 .filter(|t| t.info.name.is_in_project(&project_id))
-                .map(|t| t.clone())
+                .cloned()
                 .collect::<Vec<_>>();
             topics
         };
@@ -89,7 +85,7 @@ impl TopicManager {
             .collect::<Vec<_>>();
 
         // If we got at least one element, then we want to return a new offset.
-        let new_offset = if topics_for_project.len() > 0 {
+        let new_offset = if !topics_for_project.is_empty() {
             Some(skip_value + topics_for_project.len())
         } else {
             None

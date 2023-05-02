@@ -1,4 +1,5 @@
 mod ack_id;
+mod deadline_modification;
 mod errors;
 mod pulled_message;
 mod stats;
@@ -8,6 +9,7 @@ pub mod subscription_manager;
 mod subscription_name;
 
 pub use ack_id::*;
+pub use deadline_modification::*;
 pub use errors::*;
 pub use pulled_message::*;
 pub use stats::*;

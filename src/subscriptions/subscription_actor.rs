@@ -1,7 +1,7 @@
 use crate::collections::Messages;
 use crate::subscriptions::{
-    AckId, AcknowledgeMessagesError, GetStatsError, PullMessagesError, PulledMessage,
-    SubscriptionInfo, SubscriptionStats,
+    AckId, AcknowledgeMessagesError, DeadlineModification, GetStatsError, ModifyDeadlineError,
+    PullMessagesError, PulledMessage, SubscriptionInfo, SubscriptionStats,
 };
 use crate::topics::{Topic, TopicMessage};
 use std::collections::{hash_map, HashMap};
@@ -24,6 +24,10 @@ pub enum SubscriptionRequest {
     AcknowledgeMessages {
         ack_ids: Vec<AckId>,
         responder: oneshot::Sender<Result<(), AcknowledgeMessagesError>>,
+    },
+    ModifyDeadline {
+        deadline_modifications: Vec<DeadlineModification>,
+        responder: oneshot::Sender<Result<(), ModifyDeadlineError>>,
     },
     GetStats {
         responder: oneshot::Sender<Result<SubscriptionStats, GetStatsError>>,
@@ -98,6 +102,13 @@ where
                 let result = self.acknowledge_messages(ack_ids).await;
                 let _ = responder.send(result);
             }
+            SubscriptionRequest::ModifyDeadline {
+                deadline_modifications,
+                responder,
+            } => {
+                let result = self.modify_deadline(deadline_modifications).await;
+                let _ = responder.send(result);
+            }
             SubscriptionRequest::GetStats { responder } => {
                 let result = self.get_stats().await;
                 let _ = responder.send(result);
@@ -148,14 +159,46 @@ where
         &mut self,
         ack_ids: Vec<AckId>,
     ) -> Result<(), AcknowledgeMessagesError> {
-        for ack_id in ack_ids {
-            let entry = match self.outstanding.entry(ack_id) {
-                hash_map::Entry::Vacant(_) => continue,
-                hash_map::Entry::Occupied(occupied) => occupied,
-            };
+        ack_ids
+            .iter()
+            .for_each(|ack_id| match self.outstanding.entry(*ack_id) {
+                hash_map::Entry::Vacant(_) => (),
+                hash_map::Entry::Occupied(occupied) => {
+                    occupied.remove();
+                }
+            });
 
-            let _ = entry.remove();
-        }
+        Ok(())
+    }
+
+    /// Modifies the deadline for messages that have been pulled.
+    async fn modify_deadline(
+        &mut self,
+        deadline_modifications: Vec<DeadlineModification>,
+    ) -> Result<(), ModifyDeadlineError> {
+        let nacks = deadline_modifications
+            .iter()
+            .filter_map(|modification| match modification.new_deadline {
+                Some(_) => {
+                    eprintln!("Deadline extension not supported yet");
+                    None
+                }
+                None => {
+                    let entry = match self.outstanding.entry(modification.ack_id) {
+                        hash_map::Entry::Vacant(_) => return None,
+                        hash_map::Entry::Occupied(occupied) => occupied,
+                    };
+
+                    let message = Arc::clone(entry.get().message());
+                    entry.remove();
+                    Some(dbg!(message))
+                }
+            })
+            .collect::<Vec<_>>();
+
+        self.backlog.append(dbg!(nacks));
+        (self.signal_new_messages)();
+
         Ok(())
     }
 
@@ -165,6 +208,7 @@ where
             self.info.name.clone(),
             self.topic.info.name.clone(),
             self.outstanding.len(),
+            self.backlog.len(),
         );
         Ok(stats)
     }

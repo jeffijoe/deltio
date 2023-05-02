@@ -14,6 +14,9 @@ pub struct SubscriptionStats {
 
     /// The count of messages that are outstanding.
     pub outstanding_messages_count: usize,
+
+    /// The count of messages that are in the backlog.
+    pub backlog_messages_count: usize,
 }
 
 impl SubscriptionStats {
@@ -22,11 +25,13 @@ impl SubscriptionStats {
         subscription_name: SubscriptionName,
         topic_name: TopicName,
         outstanding_messages_count: usize,
+        backlog_messages_count: usize,
     ) -> Self {
         Self {
             subscription_name,
             topic_name,
             outstanding_messages_count,
+            backlog_messages_count,
         }
     }
 }

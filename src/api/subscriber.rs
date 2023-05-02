@@ -12,7 +12,8 @@ use crate::pubsub_proto::{
 use crate::subscriptions::subscription_manager::SubscriptionManager;
 use crate::subscriptions::{
     AckId, AckIdParseError, AcknowledgeMessagesError, CreateSubscriptionError,
-    GetSubscriptionError, ListSubscriptionsError, PullMessagesError,
+    DeadlineModification, GetSubscriptionError, ListSubscriptionsError, ModifyDeadlineError,
+    PullMessagesError,
 };
 use crate::topics::topic_manager::TopicManager;
 use crate::topics::GetTopicError;
@@ -228,7 +229,7 @@ impl Subscriber for SubscriberService {
                         }
                     }).collect::<Vec<_>>();
 
-                    if received_messages.len() > 0 {
+                    if !received_messages.is_empty() {
                         yield StreamingPullResponse {
                             received_messages,
                             acknowledge_confirmation: None,
@@ -339,7 +340,7 @@ async fn handle_streaming_pull_request(
     }
 
     // Ack messages if appropriate.
-    if request.ack_ids.len() > 0 {
+    if !request.ack_ids.is_empty() {
         // Wishing we had `traverse` and `sequence`. Oh well.
         let mut ack_ids = Vec::with_capacity(request.ack_ids.len());
         for ack_id in request.ack_ids {
@@ -356,6 +357,32 @@ async fn handle_streaming_pull_request(
             .await
             .map_err(|e| match e {
                 AcknowledgeMessagesError::Closed => Status::cancelled("System is shutting down"),
+            })?;
+    }
+
+    // Extend deadlines if requested to do so.
+    if !request.modify_deadline_ack_ids.is_empty() {
+        let now = std::time::SystemTime::now();
+        let deadline_modifications = request
+            .modify_deadline_ack_ids
+            .iter()
+            .zip(request.modify_deadline_seconds)
+            .map(|(ack_id, seconds)| {
+                let ack_id = parser::parse_ack_id(ack_id)?;
+                let seconds = parser::parse_deadline_extension_duration(seconds)?;
+                let modification = match seconds {
+                    Some(seconds) => DeadlineModification::new(ack_id, now + seconds),
+                    None => DeadlineModification::nack(ack_id),
+                };
+                Ok(modification)
+            })
+            .collect::<Result<Vec<_>, Status>>()?;
+
+        subscription
+            .modify_ack_deadlines(deadline_modifications)
+            .await
+            .map_err(|e| match e {
+                ModifyDeadlineError::Closed => Status::cancelled("System is shutting down"),
             })?;
     }
 

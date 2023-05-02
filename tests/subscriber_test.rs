@@ -1,5 +1,5 @@
 use deltio::pubsub_proto::{
-    GetSubscriptionRequest, ListSubscriptionsRequest, StreamingPullRequest,
+    GetSubscriptionRequest, ListSubscriptionsRequest, StreamingPullRequest, StreamingPullResponse,
 };
 use deltio::subscriptions::SubscriptionName;
 use deltio::topics::TopicName;
@@ -192,6 +192,7 @@ async fn test_streaming_pull() {
     let pull_response = inbound.next().await.unwrap().unwrap();
     assert_eq!(pull_response.received_messages.len(), 2);
 
+    // ACK the 2 messages.
     sender
         .send(StreamingPullRequest {
             subscription: Default::default(),
@@ -212,11 +213,50 @@ async fn test_streaming_pull() {
 
     // Publish more messages and wait again.
     server
-        .publish_text_messages(&topic_name, vec!["Deltio".into()])
+        .publish_text_messages(&topic_name, vec!["Woah".into(), "Much Resilient".into()])
         .await;
 
     let pull_response = inbound.next().await.unwrap().unwrap();
-    assert_eq!(pull_response.received_messages.len(), 1);
-    let message = pull_response.received_messages[0].message.clone().unwrap();
-    assert_eq!(String::from_utf8(message.data).unwrap(), "Deltio");
+    assert_eq!(pull_response.received_messages.len(), 2);
+    assert_eq!(
+        collect_text_messages(&pull_response),
+        vec!["Woah", "Much Resilient"]
+    );
+
+    let ack_ids = pull_response
+        .received_messages
+        .iter()
+        .map(|r| r.ack_id.clone())
+        .collect::<Vec<_>>();
+
+    // NACK the messages so we receive them again.
+    sender
+        .send(StreamingPullRequest {
+            subscription: Default::default(),
+            ack_ids: Default::default(),
+            modify_deadline_seconds: ack_ids.iter().map(|_| 0).collect(),
+            modify_deadline_ack_ids: ack_ids,
+            stream_ack_deadline_seconds: 0,
+            client_id: Default::default(),
+            max_outstanding_messages: 0,
+            max_outstanding_bytes: 0,
+        })
+        .await
+        .unwrap();
+
+    // Pull all the messages again, we should get all the ones we nack'ed.
+    let pull_response = inbound.next().await.unwrap().unwrap();
+    assert_eq!(pull_response.received_messages.len(), 2);
+    assert_eq!(
+        collect_text_messages(&pull_response),
+        vec!["Woah", "Much Resilient"]
+    );
+}
+
+fn collect_text_messages(pull_response: &StreamingPullResponse) -> Vec<String> {
+    pull_response
+        .received_messages
+        .iter()
+        .map(|m| String::from_utf8(m.message.clone().unwrap().data).unwrap())
+        .collect::<Vec<_>>()
 }
