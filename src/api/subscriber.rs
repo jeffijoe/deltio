@@ -11,8 +11,8 @@ use crate::pubsub_proto::{
 };
 use crate::subscriptions::subscription_manager::SubscriptionManager;
 use crate::subscriptions::{
-    AcknowledgeMessagesError, CreateSubscriptionError, DeadlineModification, GetSubscriptionError,
-    ListSubscriptionsError, ModifyDeadlineError, PullMessagesError,
+    AcknowledgeMessagesError, CreateSubscriptionError, GetSubscriptionError,
+    ListSubscriptionsError, ModifyDeadlineError, PullMessagesError, SubscriptionName,
 };
 use crate::topics::topic_manager::TopicManager;
 use crate::topics::GetTopicError;
@@ -155,21 +155,60 @@ impl Subscriber for SubscriberService {
         &self,
         _request: Request<DeleteSubscriptionRequest>,
     ) -> Result<Response<()>, Status> {
-        todo!()
+        // TODO: Implement
+        Ok(Response::new(()))
     }
 
     async fn modify_ack_deadline(
         &self,
-        _request: Request<ModifyAckDeadlineRequest>,
+        request: Request<ModifyAckDeadlineRequest>,
     ) -> Result<Response<()>, Status> {
-        todo!()
+        let request = request.get_ref();
+        let now = std::time::SystemTime::now();
+        let deadline_modifications = parser::parse_deadline_modifications(
+            now,
+            &request.ack_ids,
+            &request
+                .ack_ids
+                .iter()
+                .map(|_| request.ack_deadline_seconds)
+                .collect(),
+        )?;
+        let subscription_name = parser::parse_subscription_name(&request.subscription)?;
+        let subscription = get_subscription(&self.subscription_manager, &subscription_name)?;
+
+        subscription
+            .modify_ack_deadlines(deadline_modifications)
+            .await
+            .map_err(|e| match e {
+                ModifyDeadlineError::Closed => Status::internal("System is shutting down"),
+            })?;
+
+        Ok(Response::new(()))
     }
 
     async fn acknowledge(
         &self,
-        _request: Request<AcknowledgeRequest>,
+        request: Request<AcknowledgeRequest>,
     ) -> Result<Response<()>, Status> {
-        todo!()
+        let request = request.get_ref();
+        let ack_ids = request
+            .ack_ids
+            .iter()
+            .map(|ack_id| parser::parse_ack_id(ack_id))
+            .collect::<Result<Vec<_>, Status>>()?;
+
+        let subscription_name = parser::parse_subscription_name(&request.subscription)?;
+        let subscription = get_subscription(&self.subscription_manager, &subscription_name)?;
+
+        subscription
+            .acknowledge_messages(ack_ids)
+            .await
+            .map_err(|e| match e {
+                AcknowledgeMessagesError::Closed => Status::internal("System is shutting down"),
+            })?;
+
+        Ok(Response::new(()))
     }
 
     async fn pull(&self, _request: Request<PullRequest>) -> Result<Response<PullResponse>, Status> {
@@ -184,23 +223,13 @@ impl Subscriber for SubscriberService {
         request: Request<Streaming<StreamingPullRequest>>,
     ) -> Result<Response<Self::StreamingPullStream>, Status> {
         let mut stream = request.into_inner();
-        let subscription_manager = Arc::clone(&self.subscription_manager);
-
         let request = match stream.next().await {
             None => return Err(Status::cancelled("The request was canceled")),
             Some(req) => req?,
         };
 
         let subscription_name = parser::parse_subscription_name(&request.subscription)?;
-        let subscription = subscription_manager
-            .get_subscription(&subscription_name)
-            .map_err(|e| match e {
-                GetSubscriptionError::DoesNotExist => Status::not_found(format!(
-                    "The subscription {} does not exist",
-                    &subscription_name
-                )),
-                GetSubscriptionError::Closed => Status::internal("System is shutting down"),
-            })?;
+        let subscription = get_subscription(&self.subscription_manager, &subscription_name)?;
 
         // Pulls messages and streams them to the client.
         let messages_stream = {
@@ -364,20 +393,11 @@ async fn handle_streaming_pull_request(
     // Extend deadlines if requested to do so.
     if !request.modify_deadline_ack_ids.is_empty() {
         let now = std::time::SystemTime::now();
-        let deadline_modifications = request
-            .modify_deadline_ack_ids
-            .iter()
-            .zip(request.modify_deadline_seconds)
-            .map(|(ack_id, seconds)| {
-                let ack_id = parser::parse_ack_id(ack_id)?;
-                let seconds = parser::parse_deadline_extension_duration(seconds)?;
-                let modification = match seconds {
-                    Some(seconds) => DeadlineModification::new(ack_id, now + seconds),
-                    None => DeadlineModification::nack(ack_id),
-                };
-                Ok(modification)
-            })
-            .collect::<Result<Vec<_>, Status>>()?;
+        let deadline_modifications = parser::parse_deadline_modifications(
+            now,
+            &request.modify_deadline_ack_ids,
+            &request.modify_deadline_seconds,
+        )?;
 
         subscription
             .modify_ack_deadlines(deadline_modifications)
@@ -388,6 +408,22 @@ async fn handle_streaming_pull_request(
     }
 
     Ok(None)
+}
+
+/// Helper function to get a subscription from the subscription manager.
+fn get_subscription(
+    subscription_manager: &Arc<SubscriptionManager>,
+    subscription_name: &SubscriptionName,
+) -> Result<Arc<crate::subscriptions::Subscription>, Status> {
+    subscription_manager
+        .get_subscription(subscription_name)
+        .map_err(|e| match e {
+            GetSubscriptionError::DoesNotExist => Status::not_found(format!(
+                "The subscription {} does not exist",
+                &subscription_name
+            )),
+            GetSubscriptionError::Closed => Status::internal("System is shutting down"),
+        })
 }
 
 fn map_to_subscription_resource(subscription: &crate::subscriptions::Subscription) -> Subscription {

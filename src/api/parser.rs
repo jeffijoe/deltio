@@ -1,6 +1,6 @@
-use crate::subscriptions::{AckId, AckIdParseError, SubscriptionName};
+use crate::subscriptions::{AckId, AckIdParseError, DeadlineModification, SubscriptionName};
 use crate::topics::TopicName;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 use tonic::Status;
 
 /// Parses the topic name.
@@ -34,4 +34,25 @@ pub fn parse_deadline_extension_duration(raw_value: i32) -> Result<Option<Durati
         0 => Ok(None),
         _ => Ok(Some(Duration::from_secs(raw_value as u64))),
     }
+}
+
+/// Parses a list of deadline modifications.
+pub fn parse_deadline_modifications(
+    now: SystemTime,
+    ack_ids: &Vec<String>,
+    modify_deadline_seconds: &Vec<i32>,
+) -> Result<Vec<DeadlineModification>, Status> {
+    ack_ids
+        .iter()
+        .zip(modify_deadline_seconds)
+        .map(|(ack_id, seconds)| {
+            let ack_id = parse_ack_id(ack_id)?;
+            let seconds = parse_deadline_extension_duration(*seconds)?;
+            let modification = match seconds {
+                Some(seconds) => DeadlineModification::new(ack_id, now + seconds),
+                None => DeadlineModification::nack(ack_id),
+            };
+            Ok(modification)
+        })
+        .collect::<Result<Vec<_>, Status>>()
 }

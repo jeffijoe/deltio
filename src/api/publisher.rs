@@ -191,7 +191,8 @@ impl Publisher for PublisherService {
         &self,
         _request: Request<DeleteTopicRequest>,
     ) -> Result<Response<()>, Status> {
-        todo!()
+        // TODO: Implement
+        Ok(Response::new(()))
     }
 
     async fn detach_subscription(

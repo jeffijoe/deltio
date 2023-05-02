@@ -7,6 +7,7 @@ mod subscription;
 mod subscription_actor;
 pub mod subscription_manager;
 mod subscription_name;
+pub mod flow_control;
 
 pub use ack_id::*;
 pub use deadline_modification::*;
