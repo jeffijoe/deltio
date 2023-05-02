@@ -27,13 +27,11 @@ pub fn parse_ack_id(raw_value: &str) -> Result<AckId, Status> {
 
 /// Parses a deadline extension duration.
 pub fn parse_deadline_extension_duration(raw_value: i32) -> Result<Option<Duration>, Status> {
-    if raw_value < 0 {
-        Err(Status::invalid_argument(
+    match raw_value {
+        v if v < 0 => Err(Status::invalid_argument(
             "Seconds must not be less than zero",
-        ))
-    } else if raw_value == 0 {
-        Ok(None)
-    } else {
-        Ok(Some(Duration::from_secs(raw_value as u64)))
+        )),
+        0 => Ok(None),
+        _ => Ok(Some(Duration::from_secs(raw_value as u64))),
     }
 }

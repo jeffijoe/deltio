@@ -49,8 +49,8 @@ pub struct SubscriptionActor<S> {
     /// A map of messages have been pulled but not acked/nacked yet.
     outstanding: HashMap<AckId, PulledMessage>,
 
-    /// A signal that notifies of new messages having been posted.
-    signal_new_messages: S,
+    /// A signal that notifies of messages being available to pull in the backlog.
+    signal_messages_available: S,
 
     /// The next ID to use as the ACK ID for a pulled message.
     next_ack_id: AckId,
@@ -70,7 +70,7 @@ where
         let mut actor = Self {
             topic,
             info,
-            signal_new_messages,
+            signal_messages_available: signal_new_messages,
             backlog: Messages::new(),
             outstanding: HashMap::new(),
             next_ack_id: AckId::new(1),
@@ -119,7 +119,7 @@ where
     /// Posts new messages to the subscription.
     async fn post_messages(&mut self, new_messages: Vec<Arc<TopicMessage>>) {
         self.backlog.append(new_messages);
-        (self.signal_new_messages)();
+        (self.signal_messages_available)();
     }
 
     /// Pulls messages from the subscription, marking them as outstanding so they won't be
@@ -151,6 +151,9 @@ where
             }
         }
 
+        // If there are still messages left in the backlog, trigger another signal.
+        (self.signal_messages_available)();
+
         Ok(result)
     }
 
@@ -177,27 +180,18 @@ where
         deadline_modifications: Vec<DeadlineModification>,
     ) -> Result<(), ModifyDeadlineError> {
         let nacks = deadline_modifications
-            .iter()
+            .into_iter()
             .filter_map(|modification| match modification.new_deadline {
                 Some(_) => {
                     eprintln!("Deadline extension not supported yet");
                     None
                 }
-                None => {
-                    let entry = match self.outstanding.entry(modification.ack_id) {
-                        hash_map::Entry::Vacant(_) => return None,
-                        hash_map::Entry::Occupied(occupied) => occupied,
-                    };
-
-                    let message = Arc::clone(entry.get().message());
-                    entry.remove();
-                    Some(dbg!(message))
-                }
+                None => self.nack_message(modification.ack_id),
             })
             .collect::<Vec<_>>();
 
-        self.backlog.append(dbg!(nacks));
-        (self.signal_new_messages)();
+        self.backlog.append(nacks);
+        (self.signal_messages_available)();
 
         Ok(())
     }
@@ -211,5 +205,18 @@ where
             self.backlog.len(),
         );
         Ok(stats)
+    }
+
+    /// NACKs the outstanding message referred to by `ack_id` and returns it.
+    #[inline]
+    fn nack_message(&mut self, ack_id: AckId) -> Option<Arc<TopicMessage>> {
+        let entry = match self.outstanding.entry(ack_id) {
+            hash_map::Entry::Vacant(_) => return None,
+            hash_map::Entry::Occupied(occupied) => occupied,
+        };
+
+        let message = Arc::clone(entry.get().message());
+        entry.remove();
+        Some(message)
     }
 }

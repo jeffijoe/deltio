@@ -82,7 +82,7 @@ impl TestHost {
 
         // Create the clients.
         let publisher = PublisherClient::new(channel.clone());
-        let subscriber = SubscriberClient::new(channel.clone());
+        let subscriber = SubscriberClient::new(channel);
         Ok(Self {
             publisher,
             subscriber,
@@ -101,7 +101,7 @@ impl TestHost {
     pub async fn create_topic_with_name(&mut self, topic_name: &TopicName) -> Topic {
         let response = self
             .publisher
-            .create_topic(map_to_topic_resource(&topic_name))
+            .create_topic(map_to_topic_resource(topic_name))
             .await
             .unwrap();
         response.get_ref().clone()
@@ -116,8 +116,8 @@ impl TestHost {
         let response = self
             .subscriber
             .create_subscription(map_to_subscription_resource(
-                &subscription_name,
-                &topic_name,
+                subscription_name,
+                topic_name,
             ))
             .await
             .unwrap();
@@ -171,7 +171,7 @@ impl TestHost {
                     modify_deadline_seconds: vec![],
                     modify_deadline_ack_ids: vec![],
                     stream_ack_deadline_seconds: 0,
-                    client_id: client_id,
+                    client_id,
                     // TODO: Respect these
                     max_outstanding_messages: 100,
                     max_outstanding_bytes: 100_000_000,

@@ -11,9 +11,8 @@ use crate::pubsub_proto::{
 };
 use crate::subscriptions::subscription_manager::SubscriptionManager;
 use crate::subscriptions::{
-    AckId, AckIdParseError, AcknowledgeMessagesError, CreateSubscriptionError,
-    DeadlineModification, GetSubscriptionError, ListSubscriptionsError, ModifyDeadlineError,
-    PullMessagesError,
+    AcknowledgeMessagesError, CreateSubscriptionError, DeadlineModification, GetSubscriptionError,
+    ListSubscriptionsError, ModifyDeadlineError, PullMessagesError,
 };
 use crate::topics::topic_manager::TopicManager;
 use crate::topics::GetTopicError;
@@ -208,12 +207,18 @@ impl Subscriber for SubscriberService {
             let subscription = Arc::clone(&subscription);
             async_stream::try_stream! {
                 loop {
+                    // First, subscribe to the messages signal so that
+                    // any new messages from this point forward will trigger
+                    // the notification.
                     let signal = subscription.new_messages_signal();
+
+                    // Then, pull the available messages from the subscription.
                     let pulled = match subscription.pull_messages(10).await {
                         Err(PullMessagesError::Closed) => return,
                         Ok(pulled) => pulled
                     };
 
+                    // Map them to the protocol format.
                     let received_messages = pulled.into_iter().map(|m| ReceivedMessage {
                         ack_id: m.ack_id().to_string(),
                         delivery_attempt: m.delivery_attempt() as i32,
@@ -229,6 +234,7 @@ impl Subscriber for SubscriberService {
                         }
                     }).collect::<Vec<_>>();
 
+                    // If we received any messages, yield them back.
                     if !received_messages.is_empty() {
                         yield StreamingPullResponse {
                             received_messages,
@@ -238,7 +244,7 @@ impl Subscriber for SubscriberService {
                         }
                     }
 
-                    // Wait for the next signal.
+                    // Wait for the next signal and do it all over again.
                     signal.await;
                 }
             }
@@ -341,16 +347,11 @@ async fn handle_streaming_pull_request(
 
     // Ack messages if appropriate.
     if !request.ack_ids.is_empty() {
-        // Wishing we had `traverse` and `sequence`. Oh well.
-        let mut ack_ids = Vec::with_capacity(request.ack_ids.len());
-        for ack_id in request.ack_ids {
-            let ack_id = AckId::parse(&ack_id).map_err(|e| match e {
-                AckIdParseError::Malformed => {
-                    Status::invalid_argument(format!("ack_id '{}' was malformed", &ack_id))
-                }
-            })?;
-            ack_ids.push(ack_id);
-        }
+        let ack_ids = request
+            .ack_ids
+            .iter()
+            .map(|ack_id| parser::parse_ack_id(ack_id))
+            .collect::<Result<Vec<_>, Status>>()?;
 
         subscription
             .acknowledge_messages(ack_ids)
