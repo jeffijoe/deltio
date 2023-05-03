@@ -152,7 +152,9 @@ where
         }
 
         // If there are still messages left in the backlog, trigger another signal.
-        (self.signal_messages_available)();
+        if !self.backlog.is_empty() {
+            (self.signal_messages_available)();
+        }
 
         Ok(result)
     }
@@ -191,7 +193,9 @@ where
             .collect::<Vec<_>>();
 
         self.backlog.append(nacks);
-        (self.signal_messages_available)();
+        if !self.backlog.is_empty() {
+            (self.signal_messages_available)();
+        }
 
         Ok(())
     }

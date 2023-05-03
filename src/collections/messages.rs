@@ -41,9 +41,13 @@ impl Messages {
     }
 
     /// Returns the amount of messages contained within
-    #[allow(dead_code)]
     pub fn len(&self) -> usize {
         self.list.len()
+    }
+
+    /// Returns true if there are no messages in the queue.
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
     }
 
     /// Removes a message from the front of the queue.
