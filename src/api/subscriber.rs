@@ -231,10 +231,16 @@ impl Subscriber for SubscriberService {
         let subscription_name = parser::parse_subscription_name(&request.subscription)?;
         let subscription = get_subscription(&self.subscription_manager, &subscription_name)?;
 
+        let (sender, mut receiver) =
+            tokio::sync::mpsc::channel::<Result<StreamingPullResponse, Status>>(4);
+
         // Pulls messages and streams them to the client.
         let messages_stream = {
+        {
             let subscription = Arc::clone(&subscription);
             async_stream::try_stream! {
+            let sender = sender.clone();
+            tokio::spawn(async move {
                 loop {
                     // First, subscribe to the messages signal so that
                     // any new messages from this point forward will trigger
@@ -244,32 +250,47 @@ impl Subscriber for SubscriberService {
                     // Then, pull the available messages from the subscription.
                     let pulled = match subscription.pull_messages(10).await {
                         Err(PullMessagesError::Closed) => return,
-                        Ok(pulled) => pulled
+                        Ok(pulled) => pulled,
                     };
 
                     // Map them to the protocol format.
-                    let received_messages = pulled.into_iter().map(|m| ReceivedMessage {
-                        ack_id: m.ack_id().to_string(),
-                        delivery_attempt: m.delivery_attempt() as i32,
-                        message: {
-                            let message = m.message();
-                            Some(PubsubMessage {
-                                attributes: Default::default(),
-                                publish_time: Some(prost_types::Timestamp::from(message.published_at)),
-                                ordering_key: String::default(),
-                                message_id: message.id.to_string(),
-                                data: message.data.to_vec()
-                            })
-                        }
-                    }).collect::<Vec<_>>();
+                    let received_messages = pulled
+                        .into_iter()
+                        .map(|m| ReceivedMessage {
+                            ack_id: m.ack_id().to_string(),
+                            delivery_attempt: m.delivery_attempt() as i32,
+                            message: {
+                                let message = m.message();
+                                Some(PubsubMessage {
+                                    attributes: Default::default(),
+                                    publish_time: Some(prost_types::Timestamp::from(
+                                        message.published_at,
+                                    )),
+                                    ordering_key: String::default(),
+                                    message_id: message.id.to_string(),
+                                    data: message.data.to_vec(),
+                                })
+                            },
+                        })
+                        .collect::<Vec<_>>();
 
                     // If we received any messages, yield them back.
                     if !received_messages.is_empty() {
-                        yield StreamingPullResponse {
-                            received_messages,
-                            acknowledge_confirmation: None,
-                            modify_ack_deadline_confirmation: None,
-                            subscription_properties: None
+                        println!(
+                            "{}: pulled {} messages",
+                            &subscription_name,
+                            received_messages.len()
+                        );
+                        let send_result = sender
+                            .send(Ok(StreamingPullResponse {
+                                received_messages,
+                                acknowledge_confirmation: None,
+                                modify_ack_deadline_confirmation: None,
+                                subscription_properties: None,
+                            }))
+                            .await;
+                        if send_result.is_err() {
+                            return;
                         }
                     }
 
@@ -277,23 +298,46 @@ impl Subscriber for SubscriberService {
                     signal.await;
                 }
             }
+            })
         };
 
         // Handles requests from the client after the initial request.
-        let control_stream = {
+        {
             let subscription = Arc::clone(&subscription);
-            async_stream::try_stream! {
+            tokio::spawn(async move {
                 while let Some(request) = stream.next().await {
-                    let request = request?;
-                    if let Some(response) = handle_streaming_pull_request(request, Arc::clone(&subscription)).await? {
-                        yield response;
+                    let request = match request {
+                        Ok(request) => request,
+                        Err(status) => {
+                            let _ = sender.send(Err(status)).await;
+                            return;
+                        }
+                    };
+                    let result =
+                        handle_streaming_pull_request(request, Arc::clone(&subscription)).await;
+                    let response = match result {
+                        Ok(r) => r,
+                        Err(status) => {
+                            let _ = sender.send(Err(status)).await;
+                            return;
+                        }
+                    };
+
+                    if let Some(response) = response {
+                        let send_result = sender.send(Ok(response)).await;
+                        if send_result.is_err() {
+                            return;
+                        }
                     }
                 }
-            }
+            })
         };
 
-        // Merge both streams.
-        let output = messages_stream.merge(control_stream);
+        let output = async_stream::try_stream! {
+            while let Some(item) = receiver.recv().await {
+                yield item?;
+            }
+        };
 
         Ok(Response::new(Box::pin(output) as Self::StreamingPullStream))
     }
