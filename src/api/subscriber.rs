@@ -12,7 +12,8 @@ use crate::pubsub_proto::{
 use crate::subscriptions::subscription_manager::SubscriptionManager;
 use crate::subscriptions::{
     AcknowledgeMessagesError, CreateSubscriptionError, GetSubscriptionError,
-    ListSubscriptionsError, ModifyDeadlineError, PullMessagesError, SubscriptionName,
+    ListSubscriptionsError, ModifyDeadlineError, PullMessagesError, PulledMessage,
+    SubscriptionName,
 };
 use crate::topics::topic_manager::TopicManager;
 use crate::topics::GetTopicError;
@@ -46,6 +47,7 @@ impl Subscriber for SubscriberService {
         &self,
         request: Request<Subscription>,
     ) -> Result<Response<Subscription>, Status> {
+        let start = std::time::SystemTime::now();
         let request = request.get_ref();
 
         let topic_name = parser::parse_topic_name(&request.topic)?;
@@ -75,7 +77,11 @@ impl Subscriber for SubscriberService {
                 ),
                 CreateSubscriptionError::Closed => Status::internal("System is shutting down"),
             })?;
-
+        println!(
+            "{}: creating subscription took {:?}",
+            subscription_name.clone(),
+            start.elapsed()
+        );
         Ok(Response::new(map_to_subscription_resource(&subscription)))
     }
 
@@ -240,6 +246,7 @@ impl Subscriber for SubscriberService {
         &self,
         request: Request<Streaming<StreamingPullRequest>>,
     ) -> Result<Response<Self::StreamingPullStream>, Status> {
+        let start = std::time::SystemTime::now();
         let mut stream = request.into_inner();
         let request = match stream.next().await {
             None => return Err(Status::cancelled("The request was canceled")),
@@ -252,11 +259,15 @@ impl Subscriber for SubscriberService {
         let (sender, mut receiver) =
             tokio::sync::mpsc::channel::<Result<StreamingPullResponse, Status>>(4);
 
+        println!(
+            "{}: starting streaming pull took {:?}",
+            subscription_name,
+            start.elapsed()
+        );
+
         // Pulls messages and streams them to the client.
-        let messages_stream = {
         {
             let subscription = Arc::clone(&subscription);
-            async_stream::try_stream! {
             let sender = sender.clone();
             tokio::spawn(async move {
                 loop {
@@ -299,8 +310,8 @@ impl Subscriber for SubscriberService {
 
                     // Wait for the next signal and do it all over again.
                     signal.await;
+                    println!("{}: wake up", &subscription_name);
                 }
-            }
             })
         };
 

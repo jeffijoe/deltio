@@ -36,6 +36,7 @@ impl PublisherService {
 #[async_trait::async_trait]
 impl Publisher for PublisherService {
     async fn create_topic(&self, request: Request<Topic>) -> Result<Response<Topic>, Status> {
+        let start = std::time::SystemTime::now();
         let request = request.get_ref();
         let topic_name = parser::parse_topic_name(&request.name)?;
         let topic_name_str = topic_name.to_string();
@@ -49,7 +50,7 @@ impl Publisher for PublisherService {
             })?;
 
         let response = Topic {
-            name: topic_name_str,
+            name: topic_name_str.clone(),
             kms_key_name: String::default(),
             labels: HashMap::default(),
             message_retention_duration: None,
@@ -57,6 +58,12 @@ impl Publisher for PublisherService {
             schema_settings: None,
             message_storage_policy: None,
         };
+
+        println!(
+            "{}: creating topic took {:?}",
+            topic_name_str,
+            start.elapsed()
+        );
         Ok(Response::new(response))
     }
 
@@ -71,6 +78,7 @@ impl Publisher for PublisherService {
         &self,
         request: Request<PublishRequest>,
     ) -> Result<Response<PublishResponse>, Status> {
+        let start = std::time::SystemTime::now();
         let request = request.get_ref();
         let topic_name = parser::parse_topic_name(&request.topic)?;
 
@@ -83,6 +91,7 @@ impl Publisher for PublisherService {
             let message = TopicMessage::new(data);
             messages.push(message);
         }
+        println!("{}: publishing {} messages", &topic_name, messages.len());
 
         let result = topic
             .publish_messages(messages)
@@ -98,6 +107,8 @@ impl Publisher for PublisherService {
         let response = Response::new(PublishResponse {
             message_ids: result.message_ids.iter().map(|m| m.to_string()).collect(),
         });
+
+        println!("{}: publishing took {:?}", &topic_name, start.elapsed());
 
         Ok(response)
     }
