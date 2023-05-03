@@ -211,8 +211,26 @@ impl Subscriber for SubscriberService {
         Ok(Response::new(()))
     }
 
-    async fn pull(&self, _request: Request<PullRequest>) -> Result<Response<PullResponse>, Status> {
-        todo!()
+    async fn pull(&self, request: Request<PullRequest>) -> Result<Response<PullResponse>, Status> {
+        let request = request.get_ref();
+        let subscription_name = parser::parse_subscription_name(&request.subscription)?;
+        let subscription = get_subscription(&self.subscription_manager, &subscription_name)?;
+
+        // Then, pull the available messages from the subscription.
+        let pulled = subscription
+            .pull_messages(request.max_messages as u16)
+            .await
+            .map_err(|e| match e {
+                PullMessagesError::Closed => Status::internal("System is shutting down"),
+            })?;
+
+        // Map them to the protocol format.
+        let received_messages = pulled
+            .iter()
+            .map(map_to_received_message)
+            .collect::<Vec<_>>();
+
+        Ok(Response::new(PullResponse { received_messages }))
     }
 
     type StreamingPullStream =
@@ -255,23 +273,8 @@ impl Subscriber for SubscriberService {
 
                     // Map them to the protocol format.
                     let received_messages = pulled
-                        .into_iter()
-                        .map(|m| ReceivedMessage {
-                            ack_id: m.ack_id().to_string(),
-                            delivery_attempt: m.delivery_attempt() as i32,
-                            message: {
-                                let message = m.message();
-                                Some(PubsubMessage {
-                                    attributes: Default::default(),
-                                    publish_time: Some(prost_types::Timestamp::from(
-                                        message.published_at,
-                                    )),
-                                    ordering_key: String::default(),
-                                    message_id: message.id.to_string(),
-                                    data: message.data.to_vec(),
-                                })
-                            },
-                        })
+                        .iter()
+                        .map(map_to_received_message)
                         .collect::<Vec<_>>();
 
                     // If we received any messages, yield them back.
@@ -468,6 +471,24 @@ fn get_subscription(
             )),
             GetSubscriptionError::Closed => Status::internal("System is shutting down"),
         })
+}
+
+/// Maps a pulled message to a received message (protocol representation).
+fn map_to_received_message(m: &PulledMessage) -> ReceivedMessage {
+    ReceivedMessage {
+        ack_id: m.ack_id().to_string(),
+        delivery_attempt: 0, // m.delivery_attempt() as i32,
+        message: {
+            let message = m.message();
+            Some(PubsubMessage {
+                attributes: Default::default(),
+                publish_time: Some(prost_types::Timestamp::from(message.published_at)),
+                ordering_key: String::default(),
+                message_id: message.id.to_string(),
+                data: message.data.to_vec(),
+            })
+        },
+    }
 }
 
 fn map_to_subscription_resource(subscription: &crate::subscriptions::Subscription) -> Subscription {

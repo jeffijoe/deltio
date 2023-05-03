@@ -177,7 +177,11 @@ impl Publisher for PublisherService {
         &self,
         _request: Request<ListTopicSubscriptionsRequest>,
     ) -> Result<Response<ListTopicSubscriptionsResponse>, Status> {
-        todo!()
+        // TODO: Implement
+        Ok(Response::new(ListTopicSubscriptionsResponse {
+            subscriptions: Default::default(),
+            next_page_token: Default::default(),
+        }))
     }
 
     async fn list_topic_snapshots(
