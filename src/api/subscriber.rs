@@ -17,8 +17,9 @@ use crate::subscriptions::{
 };
 use crate::topics::topic_manager::TopicManager;
 use crate::topics::GetTopicError;
+use futures::Stream;
+use std::pin::Pin;
 use std::sync::Arc;
-use tokio_stream::wrappers::ReceiverStream;
 use tokio_stream::StreamExt;
 use tonic::{Request, Response, Status, Streaming};
 
@@ -252,7 +253,8 @@ impl Subscriber for SubscriberService {
         Ok(Response::new(PullResponse { received_messages }))
     }
 
-    type StreamingPullStream = ReceiverStream<Result<StreamingPullResponse, Status>>;
+    type StreamingPullStream =
+        Pin<Box<dyn Stream<Item = Result<StreamingPullResponse, Status>> + Send>>;
 
     async fn streaming_pull(
         &self,
@@ -268,9 +270,6 @@ impl Subscriber for SubscriberService {
         let subscription_name = parser::parse_subscription_name(&request.subscription)?;
         let subscription = get_subscription(&self.subscription_manager, &subscription_name)?;
 
-        let (sender, receiver) =
-            tokio::sync::mpsc::channel::<Result<StreamingPullResponse, Status>>(4);
-
         println!(
             "{}: starting streaming pull took {:?}",
             subscription_name,
@@ -278,11 +277,10 @@ impl Subscriber for SubscriberService {
         );
 
         // Pulls messages and streams them to the client.
-        let pull_fut = {
+        let pull_stream = {
             let subscription = Arc::clone(&subscription);
-            let sender = sender.clone();
-            async move {
-                while !sender.is_closed() {
+            async_stream::try_stream! {
+                loop {
                     // First, subscribe to the messages signal so that
                     // any new messages from this point forward will trigger
                     // the notification.
@@ -307,17 +305,12 @@ impl Subscriber for SubscriberService {
                             &subscription_name,
                             received_messages.len()
                         );
-                        let send_result = sender
-                            .send(Ok(StreamingPullResponse {
+                        yield StreamingPullResponse {
                                 received_messages,
                                 acknowledge_confirmation: None,
                                 modify_ack_deadline_confirmation: None,
                                 subscription_properties: None,
-                            }))
-                            .await;
-                        if send_result.is_err() {
-                            return;
-                        }
+                            };
                     }
 
                     // Wait for the next signal and do it all over again.
@@ -328,43 +321,24 @@ impl Subscriber for SubscriberService {
         };
 
         // Handles requests from the client after the initial request.
-        let push_fut = {
+        let push_stream = {
             let subscription = Arc::clone(&subscription);
-            async move {
+            async_stream::try_stream! {
                 while let Some(request) = stream.next().await {
-                    let request = match request {
-                        Ok(request) => request,
-                        Err(status) => {
-                            let _ = sender.send(Err(status)).await;
-                            return;
-                        }
-                    };
-                    let result =
-                        handle_streaming_pull_request(request, Arc::clone(&subscription)).await;
-                    let response = match result {
-                        Ok(r) => r,
-                        Err(status) => {
-                            let _ = sender.send(Err(status)).await;
-                            return;
-                        }
-                    };
+                    let request = request?;
+                    let response =
+                        handle_streaming_pull_request(request, Arc::clone(&subscription)).await?;
 
                     if let Some(response) = response {
-                        let send_result = sender.send(Ok(response)).await;
-                        if send_result.is_err() {
-                            return;
-                        }
+                        yield response;
                     }
                 }
             }
         };
 
-        // Spawn a task that polls both futures.
-        tokio::spawn(async move { tokio::join!(push_fut, pull_fut) });
-
         // Create a stream from the channel.
-        let output = ReceiverStream::new(receiver);
-        Ok(Response::new(output))
+        let output = push_stream.merge(pull_stream);
+        Ok(Response::new(Box::pin(output) as Self::StreamingPullStream))
     }
 
     async fn modify_push_config(
@@ -492,10 +466,6 @@ fn get_subscription(
                 &subscription_name
             )),
             GetSubscriptionError::Closed => Status::internal("System is shutting down"),
-        })
-        .map_err(|e| {
-            println!("{}", &e);
-            e
         })
 }
 
