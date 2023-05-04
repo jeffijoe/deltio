@@ -36,4 +36,5 @@ COPY --from=build /deltio/target/release/deltio .
 EXPOSE 8085
 
 # Set the startup command to run the binary.
+ENV RUST_LOG=error
 CMD ["./deltio", "8085"]
