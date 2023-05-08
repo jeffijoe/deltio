@@ -1,13 +1,16 @@
-use crate::subscriptions::subscription_actor::{SubscriptionActor, SubscriptionRequest};
+use crate::subscriptions::futures::{Deleted, MessagesAvailable};
+use crate::subscriptions::subscription_actor::{
+    SubscriptionActor, SubscriptionObserver, SubscriptionRequest,
+};
 use crate::subscriptions::{
-    AckId, AcknowledgeMessagesError, DeadlineModification, GetStatsError, ModifyDeadlineError,
-    PostMessagesError, PullMessagesError, PulledMessage, SubscriptionName, SubscriptionStats,
+    AckId, AcknowledgeMessagesError, DeadlineModification, DeleteError, GetStatsError,
+    ModifyDeadlineError, PostMessagesError, PullMessagesError, PulledMessage, SubscriptionName,
+    SubscriptionStats,
 };
 use crate::topics::{Topic, TopicMessage};
 use std::cmp::Ordering;
 use std::sync::Arc;
-use tokio::sync::futures::Notified;
-use tokio::sync::{mpsc, oneshot, Notify};
+use tokio::sync::{mpsc, oneshot};
 
 /// Represents a subscription.
 pub struct Subscription {
@@ -23,8 +26,8 @@ pub struct Subscription {
     /// The sender for the actor.
     sender: mpsc::Sender<SubscriptionRequest>,
 
-    /// Notifies when there are new messages to pull.
-    on_new_messages: Arc<Notify>,
+    /// Used by the actor to notify of interesting events.
+    observer: Arc<SubscriptionObserver>,
 }
 
 /// Information about a subscription.
@@ -36,21 +39,16 @@ pub struct SubscriptionInfo {
 impl Subscription {
     /// Creates a new `Subscription`.
     pub fn new(info: SubscriptionInfo, internal_id: u32, topic: Arc<Topic>) -> Self {
-        let on_new_messages = Arc::new(Notify::new());
+        let observer = Arc::new(SubscriptionObserver::new());
 
-        // Create the actor and pass in a callback for notifying on new messages.
-        let sender = SubscriptionActor::start(info.clone(), topic.clone(), {
-            let on_new_messages = on_new_messages.clone();
-            move || {
-                on_new_messages.notify_waiters();
-            }
-        });
+        // Create the actor, pass in the observer.
+        let sender = SubscriptionActor::start(info.clone(), topic.clone(), Arc::clone(&observer));
         Self {
             info,
             topic,
             sender,
             internal_id,
-            on_new_messages,
+            observer,
         }
     }
 
@@ -58,8 +56,13 @@ impl Subscription {
     /// When new messages arrive, any waiters of the signal will be
     /// notified. The signal will be subscribed to immediately, so the time at which
     /// this method is called is important.
-    pub fn new_messages_signal(&self) -> Notified<'_> {
-        self.on_new_messages.notified()
+    pub fn messages_available(&self) -> MessagesAvailable {
+        self.observer.new_messages_available()
+    }
+
+    /// Returns a signal for when the subscription gets deleted.
+    pub fn deleted(&self) -> Deleted {
+        self.observer.deleted()
     }
 
     /// Pulls messages from the subscription.
@@ -79,6 +82,8 @@ impl Subscription {
     }
 
     /// Posts new messages to the subscription.
+    ///
+    /// This does not wait for the message to be processed.
     pub async fn post_messages(
         &self,
         new_messages: Vec<Arc<TopicMessage>>,
@@ -128,6 +133,16 @@ impl Subscription {
             .await
             .map_err(|_| GetStatsError::Closed)?;
         recv.await.map_err(|_| GetStatsError::Closed)?
+    }
+
+    /// Deletes the subscription.
+    pub async fn delete(&self) -> Result<(), DeleteError> {
+        let (responder, recv) = oneshot::channel();
+        self.sender
+            .send(SubscriptionRequest::Delete { responder })
+            .await
+            .map_err(|_| DeleteError::Closed)?;
+        recv.await.map_err(|_| DeleteError::Closed)?
     }
 }
 

@@ -1,13 +1,18 @@
 use crate::collections::Messages;
+use crate::subscriptions::errors::*;
+use crate::subscriptions::futures::{Deleted, MessagesAvailable};
 use crate::subscriptions::{
-    AckId, AcknowledgeMessagesError, DeadlineModification, GetStatsError, ModifyDeadlineError,
-    PullMessagesError, PulledMessage, SubscriptionInfo, SubscriptionStats,
+    AckId, AcknowledgeMessagesError, DeadlineModification, PulledMessage, SubscriptionInfo,
+    SubscriptionStats,
 };
 use crate::topics::{Topic, TopicMessage};
+use futures::future::Shared;
+use futures::FutureExt;
+use parking_lot::Mutex;
 use std::collections::{hash_map, HashMap};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{mpsc, oneshot, Notify};
 
 /// The max amount of messages that can be pulled.
 const MAX_PULL_COUNT: u16 = 1_000;
@@ -29,13 +34,16 @@ pub enum SubscriptionRequest {
         deadline_modifications: Vec<DeadlineModification>,
         responder: oneshot::Sender<Result<(), ModifyDeadlineError>>,
     },
+    Delete {
+        responder: oneshot::Sender<Result<(), DeleteError>>,
+    },
     GetStats {
         responder: oneshot::Sender<Result<SubscriptionStats, GetStatsError>>,
     },
 }
 
 /// Actor for the subscription.
-pub struct SubscriptionActor<S> {
+pub(crate) struct SubscriptionActor {
     /// The topic that the subscription is attached to.
     #[allow(dead_code)]
     topic: Arc<Topic>,
@@ -49,31 +57,32 @@ pub struct SubscriptionActor<S> {
     /// A map of messages have been pulled but not acked/nacked yet.
     outstanding: HashMap<AckId, PulledMessage>,
 
-    /// A signal that notifies of messages being available to pull in the backlog.
-    signal_messages_available: S,
+    /// An observer to notify of various things such as new messages being available.
+    observer: Arc<SubscriptionObserver>,
 
     /// The next ID to use as the ACK ID for a pulled message.
     next_ack_id: AckId,
+
+    /// Whether the subscription has been marked as deleted.
+    deleted: bool,
 }
 
-impl<SignalNewMessages> SubscriptionActor<SignalNewMessages>
-where
-    SignalNewMessages: Fn() + Send + 'static,
-{
+impl SubscriptionActor {
     /// Starts the actor.
     pub fn start(
         info: SubscriptionInfo,
         topic: Arc<Topic>,
-        signal_new_messages: SignalNewMessages,
+        observer: Arc<SubscriptionObserver>,
     ) -> mpsc::Sender<SubscriptionRequest> {
         let (sender, mut receiver) = mpsc::channel(2048);
         let mut actor = Self {
             topic,
             info,
-            signal_messages_available: signal_new_messages,
+            observer,
             backlog: Messages::new(),
             outstanding: HashMap::new(),
             next_ack_id: AckId::new(1),
+            deleted: false,
         };
 
         tokio::spawn(async move {
@@ -109,6 +118,10 @@ where
                 let result = self.modify_deadline(deadline_modifications).await;
                 let _ = responder.send(result);
             }
+            SubscriptionRequest::Delete { responder } => {
+                let result = self.delete().await;
+                let _ = responder.send(result);
+            }
             SubscriptionRequest::GetStats { responder } => {
                 let result = self.get_stats().await;
                 let _ = responder.send(result);
@@ -118,8 +131,12 @@ where
 
     /// Posts new messages to the subscription.
     async fn post_messages(&mut self, new_messages: Vec<Arc<TopicMessage>>) {
+        if self.deleted {
+            return;
+        }
+
         self.backlog.append(new_messages);
-        (self.signal_messages_available)();
+        self.observer.notify_new_messages_available();
     }
 
     /// Pulls messages from the subscription, marking them as outstanding so they won't be
@@ -128,6 +145,10 @@ where
         &mut self,
         max_count: u16,
     ) -> Result<Vec<PulledMessage>, PullMessagesError> {
+        if self.deleted {
+            return Ok(Default::default());
+        }
+
         let outgoing_len = self.backlog.len() as u16;
         let capacity = max_count.clamp(0, outgoing_len.max(MAX_PULL_COUNT)) as usize;
         let mut result = Vec::with_capacity(capacity);
@@ -153,7 +174,7 @@ where
 
         // If there are still messages left in the backlog, trigger another signal.
         if !self.backlog.is_empty() {
-            (self.signal_messages_available)();
+            self.observer.notify_new_messages_available();
         }
 
         Ok(result)
@@ -164,6 +185,10 @@ where
         &mut self,
         ack_ids: Vec<AckId>,
     ) -> Result<(), AcknowledgeMessagesError> {
+        if self.deleted {
+            return Ok(());
+        }
+
         ack_ids
             .iter()
             .for_each(|ack_id| match self.outstanding.entry(*ack_id) {
@@ -181,6 +206,10 @@ where
         &mut self,
         deadline_modifications: Vec<DeadlineModification>,
     ) -> Result<(), ModifyDeadlineError> {
+        if self.deleted {
+            return Ok(());
+        }
+
         let nacks = deadline_modifications
             .into_iter()
             .filter_map(|modification| match modification.new_deadline {
@@ -194,8 +223,20 @@ where
 
         self.backlog.append(nacks);
         if !self.backlog.is_empty() {
-            (self.signal_messages_available)();
+            self.observer.notify_new_messages_available();
         }
+
+        Ok(())
+    }
+
+    /// Marks the subscription as deleted. Further requests will be no-ops.
+    async fn delete(&mut self) -> Result<(), DeleteError> {
+        if self.deleted {
+            return Ok(());
+        }
+
+        self.deleted = true;
+        self.observer.notify_deleted();
 
         Ok(())
     }
@@ -222,5 +263,69 @@ where
         let message = Arc::clone(entry.get().message());
         entry.remove();
         Some(message)
+    }
+}
+
+impl Drop for SubscriptionActor {
+    fn drop(&mut self) {
+        // TODO: Remove after verifying
+        println!("Dropping subscription actor {}", &self.info.name);
+    }
+}
+
+/// Observer for propagating signals to the `Subscription`.
+pub(crate) struct SubscriptionObserver {
+    /// Notifies when there are new messages to pull.
+    notify_messages_available: Notify,
+
+    /// Notifies when the subscription gets deleted.
+    /// Used by consumers to cancel any in-progress long-running operations.
+    deleted_recv: Shared<oneshot::Receiver<()>>,
+
+    // See above.
+    // This shouldn't impact performance since it's only used for deletion,
+    // which happens at most once per topic.
+    deleted_send: Mutex<Option<oneshot::Sender<()>>>,
+}
+
+impl SubscriptionObserver {
+    /// Creates a new `SubscriptionObserver`.
+    pub fn new() -> Self {
+        let (deleted_send, deleted_recv) = oneshot::channel();
+        Self {
+            deleted_send: Mutex::new(Some(deleted_send)),
+            deleted_recv: deleted_recv.shared(),
+            notify_messages_available: Notify::new(),
+        }
+    }
+
+    /// Notifies of new messages being available.
+    pub fn notify_new_messages_available(&self) {
+        self.notify_messages_available.notify_one();
+    }
+
+    /// Notifies that the subscription was deleted.
+    pub fn notify_deleted(&self) {
+        let taken = {
+            let mut unlocked = self.deleted_send.lock();
+            unlocked.take()
+        };
+
+        if let Some(sender) = taken {
+            let _ = sender.send(());
+        }
+    }
+
+    /// Returns a signal for new messages.
+    /// When new messages arrive, any waiters of the signal will be
+    /// notified. The signal will be subscribed to immediately, so the time at which
+    /// this method is called is important.
+    pub fn new_messages_available(&self) -> MessagesAvailable {
+        MessagesAvailable::new(self.notify_messages_available.notified())
+    }
+
+    /// Returns a signal for when the subscription is deleted.
+    pub fn deleted(&self) -> Deleted {
+        Deleted::new(Shared::clone(&self.deleted_recv))
     }
 }

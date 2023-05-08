@@ -178,7 +178,7 @@ impl Subscriber for SubscriberService {
                 .ack_ids
                 .iter()
                 .map(|_| request.ack_deadline_seconds)
-                .collect(),
+                .collect::<Vec<_>>(),
         )?;
         let subscription_name = parser::parse_subscription_name(&request.subscription)?;
         let subscription = get_subscription(&self.subscription_manager, &subscription_name)?;
@@ -284,7 +284,7 @@ impl Subscriber for SubscriberService {
                     // First, subscribe to the messages signal so that
                     // any new messages from this point forward will trigger
                     // the notification.
-                    let signal = subscription.new_messages_signal();
+                    let signal = subscription.messages_available();
 
                     // Then, pull the available messages from the subscription.
                     let pulled = match subscription.pull_messages(10).await {
@@ -323,6 +323,7 @@ impl Subscriber for SubscriberService {
         // Handles requests from the client after the initial request.
         let push_stream = {
             let subscription = Arc::clone(&subscription);
+
             async_stream::try_stream! {
                 while let Some(request) = stream.next().await {
                     let request = request?;

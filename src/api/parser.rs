@@ -39,8 +39,8 @@ pub fn parse_deadline_extension_duration(raw_value: i32) -> Result<Option<Durati
 /// Parses a list of deadline modifications.
 pub fn parse_deadline_modifications(
     now: SystemTime,
-    ack_ids: &Vec<String>,
-    modify_deadline_seconds: &Vec<i32>,
+    ack_ids: &[String],
+    modify_deadline_seconds: &[i32],
 ) -> Result<Vec<DeadlineModification>, Status> {
     ack_ids
         .iter()

@@ -56,6 +56,13 @@ pub enum ModifyDeadlineError {
     Closed,
 }
 
+/// Errors for deleting subscriptions..
+#[derive(thiserror::Error, Debug)]
+pub enum DeleteError {
+    #[error("The subscription is closed")]
+    Closed,
+}
+
 /// Errors for getting stats.
 #[derive(thiserror::Error, Debug)]
 pub enum GetStatsError {

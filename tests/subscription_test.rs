@@ -1,8 +1,8 @@
 use bytes::Bytes;
+use deltio::subscriptions::futures::MessagesAvailable;
 use deltio::subscriptions::*;
 use deltio::topics::*;
 use std::sync::Arc;
-use tokio::sync::futures::Notified;
 use uuid::Uuid;
 
 #[tokio::test]
@@ -10,7 +10,7 @@ async fn pulling_messages() {
     let (topic, subscription) = new_topic_and_subscription().await;
 
     // Subscribe to the notifier.
-    let notified = subscription.new_messages_signal();
+    let notified = subscription.messages_available();
 
     // Publish messages.
     topic
@@ -60,7 +60,7 @@ async fn nack_messages() {
     let (topic, subscription) = new_topic_and_subscription().await;
 
     // Subscribe to the notifier.
-    let notified = subscription.new_messages_signal();
+    let notified = subscription.messages_available();
 
     // Publish messages.
     topic
@@ -83,7 +83,7 @@ async fn nack_messages() {
     assert_eq!(stats.outstanding_messages_count, 2);
 
     // Set up a notification for nack'ing.
-    let notified = subscription.new_messages_signal();
+    let notified = subscription.messages_available();
 
     // NACK the 2nd message.
     subscription
@@ -139,7 +139,7 @@ async fn new_topic_and_subscription() -> (Arc<Topic>, Arc<Subscription>) {
     (topic, subscription)
 }
 
-async fn wait_for_notification(notified: Notified<'_>) {
+async fn wait_for_notification(notified: MessagesAvailable<'_>) {
     tokio::select! {
         _ = notified => {},
         _ = tokio::time::sleep(tokio::time::Duration::from_secs(5)) => {
