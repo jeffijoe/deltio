@@ -11,7 +11,7 @@ use crate::pubsub_proto::{
 };
 use crate::subscriptions::subscription_manager::SubscriptionManager;
 use crate::subscriptions::{
-    AcknowledgeMessagesError, CreateSubscriptionError, GetSubscriptionError,
+    AcknowledgeMessagesError, CreateSubscriptionError, DeleteError, GetSubscriptionError,
     ListSubscriptionsError, ModifyDeadlineError, PullMessagesError, PulledMessage,
     SubscriptionName,
 };
@@ -60,7 +60,7 @@ impl Subscriber for SubscriberService {
                 GetTopicError::DoesNotExist => {
                     Status::not_found(format!("The topic {} does not exist", &topic_name))
                 }
-                GetTopicError::Closed => Status::internal("System is shutting down"),
+                GetTopicError::Closed => closed_status(),
             })?;
 
         let subscription = self
@@ -75,7 +75,7 @@ impl Subscriber for SubscriberService {
                 CreateSubscriptionError::MustBeInSameProjectAsTopic => Status::invalid_argument(
                     "The subscription must be in the same project as the topic",
                 ),
-                CreateSubscriptionError::Closed => Status::internal("System is shutting down"),
+                CreateSubscriptionError::Closed => closed_status(),
             })?;
         println!(
             "{}: creating subscription took {:?}",
@@ -101,7 +101,7 @@ impl Subscriber for SubscriberService {
                     "The subscription {} does not exist",
                     &subscription_name
                 )),
-                GetSubscriptionError::Closed => Status::internal("System is shutting down"),
+                GetSubscriptionError::Closed => closed_status(),
             })?;
 
         Ok(Response::new(map_to_subscription_resource(&subscription)))
@@ -140,7 +140,7 @@ impl Subscriber for SubscriberService {
                 page_token_value.map(|v| v.value),
             )
             .map_err(|e| match e {
-                ListSubscriptionsError::Closed => Status::internal("System is shutting down"),
+                ListSubscriptionsError::Closed => closed_status(),
             })?;
 
         let subscriptions = page
@@ -159,9 +159,17 @@ impl Subscriber for SubscriberService {
 
     async fn delete_subscription(
         &self,
-        _request: Request<DeleteSubscriptionRequest>,
+        request: Request<DeleteSubscriptionRequest>,
     ) -> Result<Response<()>, Status> {
-        // TODO: Implement
+        let request = request.get_ref();
+        let subscription_name = parser::parse_subscription_name(&request.subscription)?;
+        let subscription = get_subscription(&self.subscription_manager, &subscription_name)?;
+
+        println!("{}: deleting subscription", &subscription_name);
+        subscription.delete().await.map_err(|e| match e {
+            DeleteError::Closed => closed_status(),
+        })?;
+
         Ok(Response::new(()))
     }
 
@@ -235,7 +243,7 @@ impl Subscriber for SubscriberService {
             .pull_messages(request.max_messages as u16)
             .await
             .map_err(|e| match e {
-                PullMessagesError::Closed => Status::internal("System is shutting down"),
+                PullMessagesError::Closed => closed_status(),
             })?;
 
         // Map them to the protocol format.
@@ -279,12 +287,17 @@ impl Subscriber for SubscriberService {
         // Pulls messages and streams them to the client.
         let pull_stream = {
             let subscription = Arc::clone(&subscription);
+
             async_stream::try_stream! {
-                loop {
+                let mut was_deleted = false;
+                while !was_deleted {
                     // First, subscribe to the messages signal so that
                     // any new messages from this point forward will trigger
                     // the notification.
                     let signal = subscription.messages_available();
+
+                    // Subscribe to the deletion signal.
+                    let deleted = subscription.deleted();
 
                     // Then, pull the available messages from the subscription.
                     let pulled = match subscription.pull_messages(10).await {
@@ -306,17 +319,24 @@ impl Subscriber for SubscriberService {
                             received_messages.len()
                         );
                         yield StreamingPullResponse {
-                                received_messages,
-                                acknowledge_confirmation: None,
-                                modify_ack_deadline_confirmation: None,
-                                subscription_properties: None,
-                            };
+                            received_messages,
+                            acknowledge_confirmation: None,
+                            modify_ack_deadline_confirmation: None,
+                            subscription_properties: None,
+                        };
                     }
 
                     // Wait for the next signal and do it all over again.
-                    signal.await;
-                    println!("{}: wake up", &subscription_name);
+                    // If the subscription is deleted while we wait, return a not found.
+                    was_deleted = tokio::select! {
+                        _ = signal => false,
+                        _ = deleted => true
+                    };
                 }
+
+                // If we ever get here, it means the loop above broke due to
+                // the subscription being deleted.
+                yield Err(subscription_not_found(&subscription_name))?;
             }
         };
 
@@ -462,10 +482,7 @@ fn get_subscription(
     subscription_manager
         .get_subscription(subscription_name)
         .map_err(|e| match e {
-            GetSubscriptionError::DoesNotExist => Status::not_found(format!(
-                "The subscription {} does not exist",
-                &subscription_name
-            )),
+            GetSubscriptionError::DoesNotExist => subscription_not_found(subscription_name),
             GetSubscriptionError::Closed => Status::internal("System is shutting down"),
         })
 }
@@ -491,7 +508,13 @@ fn map_to_received_message(m: &PulledMessage) -> ReceivedMessage {
 fn map_to_subscription_resource(subscription: &crate::subscriptions::Subscription) -> Subscription {
     Subscription {
         name: subscription.info.name.to_string(),
-        topic: subscription.topic.info.name.to_string(),
+        // The topic is stored as a weak reference on the subscription.
+        // If it's no longer alive, then the topic was deleted.
+        topic: subscription
+            .topic
+            .upgrade()
+            .map(|t| t.info.name.to_string())
+            .unwrap_or("_deleted_topic_".to_string()),
         push_config: None,
         bigquery_config: None,
         ack_deadline_seconds: 10,
@@ -508,4 +531,16 @@ fn map_to_subscription_resource(subscription: &crate::subscriptions::Subscriptio
         topic_message_retention_duration: None,
         state: 0,
     }
+}
+
+fn subscription_not_found(subscription_name: &SubscriptionName) -> Status {
+    Status::not_found(format!(
+        "Subscription does not exist (resource={})",
+        &subscription_name.subscription_id()
+    ))
+}
+
+#[inline]
+fn closed_status() -> Status {
+    Status::internal("System is shutting down")
 }

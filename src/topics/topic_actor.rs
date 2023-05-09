@@ -1,6 +1,6 @@
 use crate::subscriptions::{PostMessagesError, Subscription, SubscriptionName};
 use crate::topics::topic_message::{MessageId, TopicMessage};
-use crate::topics::{AttachSubscriptionError, PublishMessagesError};
+use crate::topics::{AttachSubscriptionError, PublishMessagesError, RemoveSubscriptionError};
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -17,6 +17,11 @@ pub enum TopicRequest {
     AttachSubscription {
         subscription: Arc<Subscription>,
         responder: oneshot::Sender<Result<(), AttachSubscriptionError>>,
+    },
+
+    RemoveSubscription {
+        name: SubscriptionName,
+        responder: oneshot::Sender<Result<(), RemoveSubscriptionError>>,
     },
 }
 
@@ -76,6 +81,11 @@ impl TopicActor {
                 responder,
             } => {
                 let result = self.attach_subscription(subscription);
+                let _ = responder.send(result);
+            }
+
+            TopicRequest::RemoveSubscription { name, responder } => {
+                let result = self.remove_subscription(name);
                 let _ = responder.send(result);
             }
         }
@@ -149,6 +159,15 @@ impl TopicActor {
             entry.insert(subscription);
         }
 
+        Ok(())
+    }
+
+    fn remove_subscription(
+        &mut self,
+        name: SubscriptionName,
+    ) -> Result<(), RemoveSubscriptionError> {
+        // Remove the subscription. This is called from the `Subscription` itself.
+        self.subscriptions.remove(&name);
         Ok(())
     }
 }

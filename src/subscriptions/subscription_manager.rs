@@ -8,7 +8,7 @@ use std::sync::Arc;
 /// Provides an interface over the subscription manager actor.
 pub struct SubscriptionManager {
     /// The subscriptions state.
-    state: RwLock<State>,
+    state: Arc<RwLock<State>>,
 }
 
 /// The subscription manager internal state.
@@ -19,11 +19,19 @@ struct State {
     pub next_id: u32,
 }
 
+/// Passed in by the subscription manager to subscriptions
+/// in order to call back out.
+pub struct SubscriptionManagerDelegate {
+    /// The subscription state.
+    state: Arc<RwLock<State>>,
+}
+
 impl SubscriptionManager {
     /// Creates a new `SubscriptionManager`.
-    pub(crate) fn new() -> Self {
+    pub fn new() -> Self {
+        let state = Arc::new(RwLock::new(State::new()));
         Self {
-            state: RwLock::new(State::new()),
+            state: Arc::clone(&state),
         }
     }
 
@@ -41,7 +49,9 @@ impl SubscriptionManager {
         // Create the subscription and store it in state.
         let subscription = {
             let mut state = self.state.write();
-            state.create_subscription(name, topic.clone())?
+            // Create a delegate that the subscription can use to call back out.
+            let delegate = SubscriptionManagerDelegate::new(Arc::clone(&self.state));
+            state.create_subscription(name, topic.clone(), delegate)?
         };
 
         topic
@@ -121,6 +131,12 @@ impl SubscriptionManager {
     }
 }
 
+impl Default for SubscriptionManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl State {
     /// Creates a new `State`.
     pub fn new() -> Self {
@@ -131,23 +147,40 @@ impl State {
     }
 
     /// Creates a new `Subscription`.
-    ///
-    /// This is implemented here for interior mutability.
     pub fn create_subscription(
         &mut self,
         name: SubscriptionName,
         topic: Arc<Topic>,
+        delegate: SubscriptionManagerDelegate,
     ) -> Result<Arc<Subscription>, CreateSubscriptionError> {
         if let Entry::Vacant(entry) = self.subscriptions.entry(name.clone()) {
             let subscription_info = SubscriptionInfo::new(name);
             self.next_id += 1;
             let internal_id = self.next_id;
-            let subscription = Arc::new(Subscription::new(subscription_info, internal_id, topic));
+            let subscription = Arc::new(Subscription::new(
+                subscription_info,
+                internal_id,
+                topic,
+                delegate,
+            ));
             entry.insert(subscription.clone());
             return Ok(subscription);
         }
 
         Err(CreateSubscriptionError::AlreadyExists)
+    }
+}
+
+impl SubscriptionManagerDelegate {
+    /// Creates a new `SubscriptionManagerDelegate`.
+    fn new(state: Arc<RwLock<State>>) -> Self {
+        Self { state }
+    }
+
+    /// Deletes the subscription from the manager's state.
+    pub fn delete(&self, name: &SubscriptionName) {
+        let mut state = self.state.write();
+        let _ = state.subscriptions.remove(name);
     }
 }
 

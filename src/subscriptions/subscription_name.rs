@@ -58,6 +58,11 @@ impl SubscriptionName {
     pub fn project_id(&self) -> String {
         self.project_id.to_string()
     }
+
+    /// Returns a clone of the `subscription_id`.
+    pub fn subscription_id(&self) -> String {
+        self.subscription_id.to_string()
+    }
 }
 
 impl Display for SubscriptionName {

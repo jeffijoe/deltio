@@ -41,3 +41,10 @@ pub enum AttachSubscriptionError {
     #[error("The topic is closed")]
     Closed,
 }
+
+/// Errors for removing a subscription.
+#[derive(thiserror::Error, Debug)]
+pub enum RemoveSubscriptionError {
+    #[error("The topic is closed")]
+    Closed,
+}

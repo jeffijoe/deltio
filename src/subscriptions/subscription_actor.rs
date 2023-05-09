@@ -1,11 +1,12 @@
 use crate::collections::Messages;
 use crate::subscriptions::errors::*;
 use crate::subscriptions::futures::{Deleted, MessagesAvailable};
+use crate::subscriptions::subscription_manager::SubscriptionManagerDelegate;
 use crate::subscriptions::{
     AckId, AcknowledgeMessagesError, DeadlineModification, PulledMessage, SubscriptionInfo,
     SubscriptionStats,
 };
-use crate::topics::{Topic, TopicMessage};
+use crate::topics::{RemoveSubscriptionError, Topic, TopicMessage};
 use futures::future::Shared;
 use futures::FutureExt;
 use parking_lot::Mutex;
@@ -60,6 +61,9 @@ pub(crate) struct SubscriptionActor {
     /// An observer to notify of various things such as new messages being available.
     observer: Arc<SubscriptionObserver>,
 
+    /// Used for communicating to the manager of changes to the subscription.
+    delegate: SubscriptionManagerDelegate,
+
     /// The next ID to use as the ACK ID for a pulled message.
     next_ack_id: AckId,
 
@@ -73,12 +77,14 @@ impl SubscriptionActor {
         info: SubscriptionInfo,
         topic: Arc<Topic>,
         observer: Arc<SubscriptionObserver>,
+        delegate: SubscriptionManagerDelegate,
     ) -> mpsc::Sender<SubscriptionRequest> {
         let (sender, mut receiver) = mpsc::channel(2048);
         let mut actor = Self {
             topic,
             info,
             observer,
+            delegate,
             backlog: Messages::new(),
             outstanding: HashMap::new(),
             next_ack_id: AckId::new(1),
@@ -86,8 +92,17 @@ impl SubscriptionActor {
         };
 
         tokio::spawn(async move {
-            while let Some(request) = receiver.recv().await {
-                actor.receive(request).await;
+            let deleted = actor.observer.deleted();
+            let poll = async {
+                loop {
+                    while let Some(request) = receiver.recv().await {
+                        actor.receive(request).await
+                    }
+                }
+            };
+            tokio::select! {
+                _ = deleted => (),
+                _ = poll => (),
             }
         });
 
@@ -236,6 +251,13 @@ impl SubscriptionActor {
         }
 
         self.deleted = true;
+        self.topic
+            .remove_subscription(self.info.name.clone())
+            .await
+            .map_err(|e| match e {
+                RemoveSubscriptionError::Closed => DeleteError::Closed,
+            })?;
+        self.delegate.delete(&self.info.name);
         self.observer.notify_deleted();
 
         Ok(())
@@ -266,13 +288,6 @@ impl SubscriptionActor {
     }
 }
 
-impl Drop for SubscriptionActor {
-    fn drop(&mut self) {
-        // TODO: Remove after verifying
-        println!("Dropping subscription actor {}", &self.info.name);
-    }
-}
-
 /// Observer for propagating signals to the `Subscription`.
 pub(crate) struct SubscriptionObserver {
     /// Notifies when there are new messages to pull.
@@ -284,7 +299,7 @@ pub(crate) struct SubscriptionObserver {
 
     // See above.
     // This shouldn't impact performance since it's only used for deletion,
-    // which happens at most once per topic.
+    // which happens at most once per subscription.
     deleted_send: Mutex<Option<oneshot::Sender<()>>>,
 }
 
@@ -306,13 +321,21 @@ impl SubscriptionObserver {
 
     /// Notifies that the subscription was deleted.
     pub fn notify_deleted(&self) {
+        // The oneshot sender is consumed when sending, so we need
+        // to put it in an `Option` backed by a mutex.
+        // First, acquire the lock and attempt to take out the value.
+        // This will leave `None` in it's place, so if this method were to run
+        // again, it would no-op.
         let taken = {
             let mut unlocked = self.deleted_send.lock();
             unlocked.take()
         };
 
+        // If we were able to take out the sender, send the notification.
         if let Some(sender) = taken {
             let _ = sender.send(());
+            // Also notify everyone waiting for messages.
+            self.notify_messages_available.notify_waiters();
         }
     }
 

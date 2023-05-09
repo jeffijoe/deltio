@@ -1,6 +1,7 @@
-use crate::subscriptions::Subscription;
+use crate::subscriptions::{Subscription, SubscriptionName};
+use crate::topics::errors::*;
 use crate::topics::topic_actor::{PublishMessagesResponse, TopicActor, TopicRequest};
-use crate::topics::{AttachSubscriptionError, PublishMessagesError, TopicMessage, TopicName};
+use crate::topics::{TopicMessage, TopicName};
 use std::cmp::Ordering;
 use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot};
@@ -69,6 +70,24 @@ impl Topic {
             .await
             .map_err(|_| AttachSubscriptionError::Closed)?;
         recv.await.map_err(|_| AttachSubscriptionError::Closed)?
+    }
+
+    /// Removes the subscription from the topic.
+    /// Called after the subscription itself is deleted.
+    pub async fn remove_subscription(
+        &self,
+        name: SubscriptionName,
+    ) -> Result<(), RemoveSubscriptionError> {
+        let (send, recv) = oneshot::channel();
+        let request = TopicRequest::RemoveSubscription {
+            name,
+            responder: send,
+        };
+        self.sender
+            .send(request)
+            .await
+            .map_err(|_| RemoveSubscriptionError::Closed)?;
+        recv.await.map_err(|_| RemoveSubscriptionError::Closed)?
     }
 }
 

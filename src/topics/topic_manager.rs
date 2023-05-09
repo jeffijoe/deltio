@@ -20,14 +20,14 @@ struct State {
 
 impl TopicManager {
     /// Creates a new `TopicManager`.
-    pub(crate) fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             state: RwLock::new(State::new()),
         }
     }
 
     /// Create a new topic.
-    pub fn create_topic(&self, name: TopicName) -> Result<TopicInfo, CreateTopicError> {
+    pub fn create_topic(&self, name: TopicName) -> Result<Arc<Topic>, CreateTopicError> {
         let mut state = self.state.write();
         state.create_topic(name)
     }
@@ -96,6 +96,12 @@ impl TopicManager {
     }
 }
 
+impl Default for TopicManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl State {
     /// Creates a new `State`.
     pub fn new() -> Self {
@@ -108,14 +114,15 @@ impl State {
     /// Creates a new `Topic`.
     ///
     /// This is implemented here for interior mutability.
-    pub fn create_topic(&mut self, name: TopicName) -> Result<TopicInfo, CreateTopicError> {
+    pub fn create_topic(&mut self, name: TopicName) -> Result<Arc<Topic>, CreateTopicError> {
         if let Entry::Vacant(entry) = self.topics.entry(name.clone()) {
             let topic_info = TopicInfo::new(name);
             self.next_id += 1;
             let internal_id = self.next_id;
-            let topic = Topic::new(topic_info.clone(), internal_id);
-            entry.insert(Arc::new(topic));
-            return Ok(topic_info);
+            let topic = Arc::new(Topic::new(topic_info, internal_id));
+
+            entry.insert(Arc::clone(&topic));
+            return Ok(topic);
         }
 
         Err(CreateTopicError::AlreadyExists)

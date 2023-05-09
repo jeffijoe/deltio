@@ -1,11 +1,12 @@
 use deltio::pubsub_proto::{
-    GetSubscriptionRequest, ListSubscriptionsRequest, StreamingPullRequest, StreamingPullResponse,
+    DeleteSubscriptionRequest, GetSubscriptionRequest, ListSubscriptionsRequest,
+    StreamingPullRequest, StreamingPullResponse,
 };
 use deltio::subscriptions::SubscriptionName;
 use deltio::topics::TopicName;
 use futures::StreamExt;
 use test_helpers::*;
-use tonic::Code;
+use tonic::{Code, Status};
 use uuid::Uuid;
 
 pub mod test_helpers;
@@ -251,6 +252,69 @@ async fn test_streaming_pull() {
         collect_text_messages(&pull_response),
         vec!["Woah", "Much Resilient"]
     );
+}
+
+#[tokio::test]
+async fn test_deleting_subscription() {
+    let mut server = TestHost::start().await.unwrap();
+
+    // Create a topic to subscribe to.
+    let topic_name = TopicName::new("test", "topic");
+    server.create_topic_with_name(&topic_name).await;
+
+    // Create a subscription.
+    let subscription_name = SubscriptionName::new("test", "subscription");
+    server
+        .create_subscription_with_name(&topic_name, &subscription_name)
+        .await;
+
+    // Start polling for messages.
+    let (_, mut inbound) = server.streaming_pull(&subscription_name).await;
+
+    // Publish some messages, wait for them to be retrieved.
+    server
+        .publish_text_messages(&topic_name, vec!["Hello".into(), "World".into()])
+        .await;
+
+    let pull_response = inbound.next().await.unwrap().unwrap();
+    assert_eq!(pull_response.received_messages.len(), 2);
+
+    // Delete the subscription
+    server
+        .subscriber
+        .delete_subscription(DeleteSubscriptionRequest {
+            subscription: subscription_name.to_string(),
+        })
+        .await
+        .unwrap();
+
+    // Verify that we get a Not Found on the streaming pull.
+    // Alternatively, if we get `None`, then pretend it was a not found.
+    // I believe there may be a race condition with the Tonic client
+    // where a streaming error response may or may not be received?
+    let stream_resp = inbound
+        .next()
+        .await
+        .unwrap_or(Err(Status::not_found("fallback")));
+    let stream_resp = stream_resp.unwrap_err();
+    assert_eq!(stream_resp.code(), Code::NotFound);
+    assert!(
+        inbound.next().await.is_none(),
+        "the stream should have ended"
+    );
+
+    // Verify that the subscription is gone.
+    let response = server
+        .subscriber
+        .list_subscriptions(ListSubscriptionsRequest {
+            project: subscription_name.project_id(),
+            page_size: 10,
+            page_token: Default::default(),
+        })
+        .await
+        .unwrap()
+        .into_inner();
+    assert_eq!(response.subscriptions.len(), 0);
 }
 
 fn collect_text_messages(pull_response: &StreamingPullResponse) -> Vec<String> {

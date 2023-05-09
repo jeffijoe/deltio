@@ -2,6 +2,7 @@ use crate::subscriptions::futures::{Deleted, MessagesAvailable};
 use crate::subscriptions::subscription_actor::{
     SubscriptionActor, SubscriptionObserver, SubscriptionRequest,
 };
+use crate::subscriptions::subscription_manager::SubscriptionManagerDelegate;
 use crate::subscriptions::{
     AckId, AcknowledgeMessagesError, DeadlineModification, DeleteError, GetStatsError,
     ModifyDeadlineError, PostMessagesError, PullMessagesError, PulledMessage, SubscriptionName,
@@ -9,7 +10,7 @@ use crate::subscriptions::{
 };
 use crate::topics::{Topic, TopicMessage};
 use std::cmp::Ordering;
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 use tokio::sync::{mpsc, oneshot};
 
 /// Represents a subscription.
@@ -18,7 +19,7 @@ pub struct Subscription {
     pub info: SubscriptionInfo,
 
     /// A reference to the attached topic.
-    pub topic: Arc<Topic>,
+    pub topic: Weak<Topic>,
 
     /// The internal subscription ID.
     pub internal_id: u32,
@@ -38,11 +39,18 @@ pub struct SubscriptionInfo {
 
 impl Subscription {
     /// Creates a new `Subscription`.
-    pub fn new(info: SubscriptionInfo, internal_id: u32, topic: Arc<Topic>) -> Self {
+    pub fn new(
+        info: SubscriptionInfo,
+        internal_id: u32,
+        topic: Arc<Topic>,
+        delegate: SubscriptionManagerDelegate,
+    ) -> Self {
         let observer = Arc::new(SubscriptionObserver::new());
 
         // Create the actor, pass in the observer.
-        let sender = SubscriptionActor::start(info.clone(), topic.clone(), Arc::clone(&observer));
+        let sender =
+            SubscriptionActor::start(info.clone(), topic.clone(), Arc::clone(&observer), delegate);
+        let topic = Arc::downgrade(&topic);
         Self {
             info,
             topic,
