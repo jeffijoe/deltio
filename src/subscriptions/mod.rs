@@ -3,6 +3,7 @@ mod deadline_modification;
 mod errors;
 pub mod flow_control;
 pub mod futures;
+pub mod paging;
 mod pulled_message;
 mod stats;
 mod subscription;

@@ -1,3 +1,4 @@
+use crate::subscriptions::paging::SubscriptionsPage;
 use crate::subscriptions::*;
 use crate::topics::{AttachSubscriptionError, Topic};
 use parking_lot::RwLock;
@@ -181,23 +182,5 @@ impl SubscriptionManagerDelegate {
     pub fn delete(&self, name: &SubscriptionName) {
         let mut state = self.state.write();
         let _ = state.subscriptions.remove(name);
-    }
-}
-
-/// Result for listing subscriptions.
-pub struct SubscriptionsPage {
-    /// The subscriptions on the page.
-    pub subscriptions: Vec<Arc<Subscription>>,
-    /// The offset to use for getting the next page.
-    pub offset: Option<usize>,
-}
-
-impl SubscriptionsPage {
-    /// Creates a new `SubscriptionsPage`.
-    pub fn new(subscriptions: Vec<Arc<Subscription>>, offset: Option<usize>) -> Self {
-        Self {
-            subscriptions,
-            offset,
-        }
     }
 }

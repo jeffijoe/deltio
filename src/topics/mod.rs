@@ -1,4 +1,5 @@
 mod errors;
+pub mod paging;
 mod topic;
 mod topic_actor;
 pub mod topic_manager;

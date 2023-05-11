@@ -1,3 +1,4 @@
+use crate::topics::paging::TopicsPage;
 use crate::topics::*;
 use parking_lot::RwLock;
 use std::collections::hash_map::Entry;
@@ -151,20 +152,5 @@ impl TopicManagerDelegate {
     pub fn delete(&self, topic_name: &TopicName) {
         let mut state = self.state.write();
         state.topics.remove(topic_name);
-    }
-}
-
-/// Result for listing topics.
-pub struct TopicsPage {
-    /// The topics on the page.
-    pub topics: Vec<Arc<Topic>>,
-    /// The offset to use for getting the next page.
-    pub offset: Option<usize>,
-}
-
-impl TopicsPage {
-    /// Creates a new `TopicsPage`.
-    pub fn new(topics: Vec<Arc<Topic>>, offset: Option<usize>) -> Self {
-        Self { topics, offset }
     }
 }
