@@ -111,7 +111,9 @@ impl Subscriber for SubscriberService {
         &self,
         _request: Request<UpdateSubscriptionRequest>,
     ) -> Result<Response<Subscription>, Status> {
-        todo!()
+        Err(Status::unimplemented(
+            "UpdateSubscription is not implemented in Deltio",
+        ))
     }
 
     async fn list_subscriptions(
@@ -351,14 +353,18 @@ impl Subscriber for SubscriberService {
         &self,
         _request: Request<ModifyPushConfigRequest>,
     ) -> Result<Response<()>, Status> {
-        todo!()
+        Err(Status::unimplemented(
+            "ModifyPushConfig is not implemented in Deltio",
+        ))
     }
 
     async fn get_snapshot(
         &self,
         _request: Request<GetSnapshotRequest>,
     ) -> Result<Response<Snapshot>, Status> {
-        todo!()
+        Err(Status::unimplemented(
+            "GetSnapshot is not implemented in Deltio",
+        ))
     }
 
     async fn list_snapshots(
