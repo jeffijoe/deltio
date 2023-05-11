@@ -1,3 +1,4 @@
+use crate::paging::Paging;
 use crate::topics::paging::TopicsPage;
 use crate::topics::*;
 use parking_lot::RwLock;
@@ -55,10 +56,9 @@ impl TopicManager {
     pub fn list_topics(
         &self,
         project_id: Box<str>,
-        page_size: usize,
-        page_offset: Option<usize>,
+        paging: Paging,
     ) -> Result<TopicsPage, ListTopicsError> {
-        let skip_value = page_offset.unwrap_or(0);
+        let skip_value = paging.to_skip();
 
         // We need to collect them into a vec to sort.
         // NOTE: If this ever becomes a bottleneck, we can use another level
@@ -83,24 +83,15 @@ impl TopicManager {
         // comparisons.
         topics_for_project.sort_unstable();
 
-        // Cap the page size.
-        let page_size = page_size.min(10_000);
-
         // Now apply pagination.
         let topics_for_project = topics_for_project
             .into_iter()
             .skip(skip_value)
-            .take(page_size)
+            .take(paging.size())
             .collect::<Vec<_>>();
 
-        // If we got at least one element, then we want to return a new offset.
-        let new_offset = if !topics_for_project.is_empty() {
-            Some(skip_value + topics_for_project.len())
-        } else {
-            None
-        };
-
-        let page = TopicsPage::new(topics_for_project, new_offset);
+        let next_page = paging.next_page_from_slice_result(&topics_for_project);
+        let page = TopicsPage::new(topics_for_project, next_page.offset());
         Ok(page)
     }
 }

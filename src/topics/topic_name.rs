@@ -62,8 +62,8 @@ impl TopicName {
     }
 
     /// Returns the topic ID.
-    pub fn topic_id(&self) -> String {
-        self.topic_id.to_string()
+    pub fn topic_id(&self) -> &str {
+        &self.topic_id
     }
 }
 

@@ -1,3 +1,5 @@
+use crate::paging::Paging;
+use crate::subscriptions::paging::SubscriptionsPage;
 use crate::subscriptions::{PostMessagesError, Subscription, SubscriptionName};
 use crate::topics::errors::*;
 use crate::topics::topic_manager::TopicManagerDelegate;
@@ -19,6 +21,11 @@ pub enum TopicRequest {
     AttachSubscription {
         subscription: Arc<Subscription>,
         responder: oneshot::Sender<Result<(), AttachSubscriptionError>>,
+    },
+
+    ListSubscriptions {
+        paging: Paging,
+        responder: oneshot::Sender<Result<SubscriptionsPage, ListSubscriptionsError>>,
     },
 
     RemoveSubscription {
@@ -115,7 +122,39 @@ impl TopicActor {
                 let result = self.delete();
                 let _ = responder.send(result);
             }
+
+            TopicRequest::ListSubscriptions { paging, responder } => {
+                let result = self.list_subscriptions(paging);
+                let _ = responder.send(result);
+            }
         }
+    }
+
+    fn list_subscriptions(
+        &self,
+        paging: Paging,
+    ) -> Result<SubscriptionsPage, ListSubscriptionsError> {
+        // Get the subscriptions.
+        let mut subscriptions = self.subscriptions.values().collect::<Vec<_>>();
+
+        // Sort them. We can use unstable here because we know the
+        // ID is monotonically increasing.
+        subscriptions.sort_unstable();
+
+        // Apply pagination.
+        let subscriptions = subscriptions
+            .into_iter()
+            .skip(paging.to_skip())
+            .take(paging.size())
+            .cloned()
+            .collect::<Vec<_>>();
+
+        // Create the page.
+        let next_page = paging.next_page_from_slice_result(&subscriptions);
+        let page = SubscriptionsPage::new(subscriptions, next_page.offset());
+
+        // Return the page.
+        Ok(page)
     }
 
     async fn publish_messages(

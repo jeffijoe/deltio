@@ -6,6 +6,8 @@ use crate::topics::{TopicMessage, TopicName};
 use std::cmp::Ordering;
 use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot};
+use crate::paging::Paging;
+use crate::subscriptions::paging::SubscriptionsPage;
 
 /// The `Topic` that we interact with.
 /// Any mutable state is kept within the actor.
@@ -55,6 +57,20 @@ impl Topic {
             .await
             .map_err(|_| PublishMessagesError::Closed)?;
         recv.await.map_err(|_| PublishMessagesError::Closed)?
+    }
+    
+    /// Lists subscriptions in the topic.
+    pub async fn list_subscriptions(
+        &self,
+        paging: Paging
+    ) -> Result<SubscriptionsPage, ListSubscriptionsError> {
+        let (send, recv) = oneshot::channel();
+        let request = TopicRequest::ListSubscriptions { paging, responder: send };
+        self.sender
+            .send(request)
+            .await
+            .map_err(|_| ListSubscriptionsError::Closed)?;
+        recv.await.map_err(|_| ListSubscriptionsError::Closed)?
     }
 
     /// Attaches the subscription to the topic.

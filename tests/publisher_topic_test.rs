@@ -1,4 +1,7 @@
-use deltio::pubsub_proto::{DeleteTopicRequest, GetTopicRequest, ListTopicsRequest, Topic};
+use deltio::pubsub_proto::{
+    DeleteTopicRequest, GetTopicRequest, ListTopicSubscriptionsRequest, ListTopicsRequest, Topic,
+};
+use deltio::subscriptions::SubscriptionName;
 use deltio::topics::TopicName;
 use std::collections::HashMap;
 use test_helpers::*;
@@ -152,6 +155,73 @@ async fn test_delete() {
         .unwrap_err();
     assert_eq!(status.code(), Code::NotFound);
 }
+
+#[tokio::test]
+async fn test_list_topic_subscriptions() {
+    let mut server = TestHost::start().await.unwrap();
+    let topic_name = TopicName::new("test", &Uuid::new_v4().to_string());
+
+    // Create the topic.
+    server.create_topic_with_name(&topic_name).await;
+
+    // Create the subscriptions.
+    let subscription_name1 = SubscriptionName::new("test", &Uuid::new_v4().to_string());
+    let subscription_name2 = SubscriptionName::new("test", &Uuid::new_v4().to_string());
+    server
+        .create_subscription_with_name(&topic_name, &subscription_name1)
+        .await;
+    server
+        .create_subscription_with_name(&topic_name, &subscription_name2)
+        .await;
+
+    // List subscriptions for the topic, get a single page.
+    let page = server
+        .publisher
+        .list_topic_subscriptions(ListTopicSubscriptionsRequest {
+            topic: topic_name.to_string(),
+            page_token: Default::default(),
+            page_size: 1,
+        })
+        .await
+        .unwrap()
+        .into_inner();
+
+    assert_eq!(page.subscriptions.len(), 1);
+    assert_eq!(page.subscriptions[0], subscription_name1.to_string());
+    assert_ne!(page.next_page_token, String::default());
+
+    // Get the next page.
+    let page = server
+        .publisher
+        .list_topic_subscriptions(ListTopicSubscriptionsRequest {
+            topic: topic_name.to_string(),
+            page_token: page.next_page_token,
+            page_size: 1,
+        })
+        .await
+        .unwrap()
+        .into_inner();
+
+    assert_eq!(page.subscriptions.len(), 1);
+    assert_eq!(page.subscriptions[0], subscription_name2.to_string());
+    assert_ne!(page.next_page_token, String::default());
+
+    // No more pages.
+    let page = server
+        .publisher
+        .list_topic_subscriptions(ListTopicSubscriptionsRequest {
+            topic: topic_name.to_string(),
+            page_token: page.next_page_token,
+            page_size: 1,
+        })
+        .await
+        .unwrap()
+        .into_inner();
+
+    assert_eq!(page.subscriptions.len(), 0);
+    assert_eq!(page.next_page_token, String::default());
+}
+
 // Actors: Creating took 244.654333ms, Getting page 2 took 2.243458ms
 // RwLock: Creating took 222.814875ms, Getting page 2 took 2.857791ms
 // #[tokio::test]

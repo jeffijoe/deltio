@@ -307,7 +307,7 @@ async fn test_deleting_subscription() {
     let response = server
         .subscriber
         .list_subscriptions(ListSubscriptionsRequest {
-            project: subscription_name.project_id(),
+            project: subscription_name.project_id().to_string(),
             page_size: 10,
             page_token: Default::default(),
         })

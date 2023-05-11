@@ -1,3 +1,4 @@
+use crate::paging::Paging;
 use crate::subscriptions::paging::SubscriptionsPage;
 use crate::subscriptions::*;
 use crate::topics::{AttachSubscriptionError, Topic};
@@ -43,7 +44,7 @@ impl SubscriptionManager {
         topic: Arc<Topic>,
     ) -> Result<Arc<Subscription>, CreateSubscriptionError> {
         // Topics and subscriptions must be in the same project.
-        if !topic.info.name.is_in_project(&name.project_id()) {
+        if !topic.info.name.is_in_project(name.project_id()) {
             return Err(CreateSubscriptionError::MustBeInSameProjectAsTopic);
         }
 
@@ -82,11 +83,8 @@ impl SubscriptionManager {
     pub fn list_subscriptions_in_project(
         &self,
         project_id: Box<str>,
-        page_size: usize,
-        page_offset: Option<usize>,
+        paging: Paging,
     ) -> Result<SubscriptionsPage, ListSubscriptionsError> {
-        let skip_value = page_offset.unwrap_or(0);
-
         // We need to collect them into a vec to sort.
         // NOTE: If this ever becomes a bottleneck, we can use another level
         // of `HashMap` of project ID -> subscriptions.
@@ -110,24 +108,17 @@ impl SubscriptionManager {
         // comparisons.
         subscriptions_for_project.sort_unstable();
 
-        // Cap the page size.
-        let page_size = page_size.min(10_000);
-
         // Now apply pagination.
         let subscriptions_for_project = subscriptions_for_project
             .into_iter()
-            .skip(skip_value)
-            .take(page_size)
+            .skip(paging.to_skip())
+            .take(paging.size())
             .collect::<Vec<_>>();
 
         // If we got at least one element, then we want to return a new offset.
-        let new_offset = if !subscriptions_for_project.is_empty() {
-            Some(skip_value + subscriptions_for_project.len())
-        } else {
-            None
-        };
+        let next_page = paging.next_page_from_slice_result(&subscriptions_for_project);
 
-        let page = SubscriptionsPage::new(subscriptions_for_project, new_offset);
+        let page = SubscriptionsPage::new(subscriptions_for_project, next_page.offset());
         Ok(page)
     }
 }

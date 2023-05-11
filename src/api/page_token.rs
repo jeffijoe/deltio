@@ -4,7 +4,7 @@ use base64::{engine::general_purpose, Engine};
 #[derive(Debug)]
 pub(crate) struct PageToken {
     /// Every page token is a number.
-    pub value: usize,
+    value: usize,
 }
 
 impl PageToken {
@@ -24,6 +24,12 @@ impl PageToken {
         let bytes = general_purpose::STANDARD.decode(encoded).ok()?;
         let value = usize::from_ne_bytes(bytes.try_into().ok()?);
         Some(PageToken::new(value))
+    }
+}
+
+impl From<PageToken> for usize {
+    fn from(value: PageToken) -> Self {
+        value.value
     }
 }
 

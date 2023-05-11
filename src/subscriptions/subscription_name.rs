@@ -54,14 +54,13 @@ impl SubscriptionName {
     }
 
     /// Returns a clone of the `project_id`.
-    /// TODO: Try to avoid cloning
-    pub fn project_id(&self) -> String {
-        self.project_id.to_string()
+    pub fn project_id(&self) -> &str {
+        &self.project_id
     }
 
     /// Returns a clone of the `subscription_id`.
-    pub fn subscription_id(&self) -> String {
-        self.subscription_id.to_string()
+    pub fn subscription_id(&self) -> &str {
+        &self.subscription_id
     }
 }
 

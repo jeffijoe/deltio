@@ -119,26 +119,11 @@ impl Subscriber for SubscriberService {
         request: Request<ListSubscriptionsRequest>,
     ) -> Result<Response<ListSubscriptionsResponse>, Status> {
         let request = request.get_ref();
-        let page_token_value = if request.page_token.is_empty() {
-            None
-        } else {
-            let decoded = PageToken::try_decode(&request.page_token)
-                .ok_or_else(|| Status::invalid_argument("Page token malformed"))?;
-            Some(decoded)
-        };
-
-        let page_size = request
-            .page_size
-            .try_into()
-            .map_err(|_| Status::invalid_argument("Not a valid page size"))?;
+        let paging = parser::parse_paging(request.page_size, &request.page_token)?;
 
         let page = self
             .subscription_manager
-            .list_subscriptions_in_project(
-                Box::from(request.project.clone()),
-                page_size,
-                page_token_value.map(|v| v.value),
-            )
+            .list_subscriptions_in_project(Box::from(request.project.clone()), paging)
             .map_err(|e| match e {
                 ListSubscriptionsError::Closed => closed_status(),
             })?;
@@ -380,32 +365,40 @@ impl Subscriber for SubscriberService {
         &self,
         _request: Request<ListSnapshotsRequest>,
     ) -> Result<Response<ListSnapshotsResponse>, Status> {
-        todo!()
+        Err(Status::unimplemented(
+            "ListSnapshots is not implemented in Deltio",
+        ))
     }
 
     async fn create_snapshot(
         &self,
         _request: Request<CreateSnapshotRequest>,
     ) -> Result<Response<Snapshot>, Status> {
-        todo!()
+        Err(Status::unimplemented(
+            "CreateSnapshot is not implemented in Deltio",
+        ))
     }
 
     async fn update_snapshot(
         &self,
         _request: Request<UpdateSnapshotRequest>,
     ) -> Result<Response<Snapshot>, Status> {
-        todo!()
+        Err(Status::unimplemented(
+            "UpdateSnapshot is not implemented in Deltio",
+        ))
     }
 
     async fn delete_snapshot(
         &self,
         _request: Request<DeleteSnapshotRequest>,
     ) -> Result<Response<()>, Status> {
-        todo!()
+        Err(Status::unimplemented(
+            "DeleteSnapshot is not implemented in Deltio",
+        ))
     }
 
     async fn seek(&self, _request: Request<SeekRequest>) -> Result<Response<SeekResponse>, Status> {
-        todo!()
+        Err(Status::unimplemented("Seek is not implemented in Deltio"))
     }
 }
 
@@ -533,9 +526,10 @@ fn map_to_subscription_resource(subscription: &crate::subscriptions::Subscriptio
     }
 }
 
+#[inline]
 fn subscription_not_found(subscription_name: &SubscriptionName) -> Status {
     Status::not_found(format!(
-        "Subscription does not exist (resource={})",
+        "Resource not found (resource={}).",
         &subscription_name.subscription_id()
     ))
 }

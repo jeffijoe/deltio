@@ -4,7 +4,8 @@ use crate::pubsub_proto::publisher_server::Publisher;
 use crate::pubsub_proto::*;
 use crate::topics::topic_manager::TopicManager;
 use crate::topics::{
-    CreateTopicError, DeleteError, GetTopicError, ListTopicsError, PublishMessagesError,
+    CreateTopicError, DeleteError, GetTopicError, ListSubscriptionsError, ListTopicsError,
+    PublishMessagesError,
 };
 use crate::topics::{TopicMessage, TopicName};
 use bytes::Bytes;
@@ -74,7 +75,7 @@ impl Publisher for PublisherService {
         _request: Request<UpdateTopicRequest>,
     ) -> Result<Response<Topic>, Status> {
         Err(Status::unimplemented(
-            "update_topic is not implemented in Deltio",
+            "UpdateTopic is not implemented in Deltio",
         ))
     }
 
@@ -101,7 +102,6 @@ impl Publisher for PublisherService {
             .publish_messages(messages)
             .await
             .map_err(|e| match e {
-                // TODO: Verify what the real Pub/Sub service returns.
                 PublishMessagesError::TopicDoesNotExist => topic_not_found(&topic_name),
                 PublishMessagesError::Closed => closed_status(),
             })?;
@@ -140,26 +140,11 @@ impl Publisher for PublisherService {
         request: Request<ListTopicsRequest>,
     ) -> Result<Response<ListTopicsResponse>, Status> {
         let request = request.get_ref();
-        let page_token_value = if request.page_token.is_empty() {
-            None
-        } else {
-            let decoded = PageToken::try_decode(&request.page_token)
-                .ok_or_else(|| Status::invalid_argument("Page token malformed"))?;
-            Some(decoded)
-        };
-
-        let page_size = request
-            .page_size
-            .try_into()
-            .map_err(|_| Status::invalid_argument("Not a valid page size"))?;
+        let paging = parser::parse_paging(request.page_size, &request.page_token)?;
 
         let page = self
             .topic_manager
-            .list_topics(
-                Box::from(request.project.clone()),
-                page_size,
-                page_token_value.map(|v| v.value),
-            )
+            .list_topics(Box::from(request.project.clone()), paging)
             .map_err(|e| match e {
                 ListTopicsError::Closed => closed_status(),
             })?;
@@ -188,12 +173,32 @@ impl Publisher for PublisherService {
 
     async fn list_topic_subscriptions(
         &self,
-        _request: Request<ListTopicSubscriptionsRequest>,
+        request: Request<ListTopicSubscriptionsRequest>,
     ) -> Result<Response<ListTopicSubscriptionsResponse>, Status> {
-        // TODO: Implement
+        let request = request.get_ref();
+        let topic_name = parser::parse_topic_name(&request.topic)?;
+
+        let paging = parser::parse_paging(request.page_size, &request.page_token)?;
+
+        let topic = self.get_topic_internal(&topic_name).await?;
+
+        let page = topic
+            .list_subscriptions(paging)
+            .await
+            .map_err(|e| match e {
+                ListSubscriptionsError::Closed => closed_status(),
+            })?;
+
         Ok(Response::new(ListTopicSubscriptionsResponse {
-            subscriptions: Default::default(),
-            next_page_token: Default::default(),
+            subscriptions: page
+                .subscriptions
+                .iter()
+                .map(|s| s.info.name.to_string())
+                .collect(),
+            next_page_token: page
+                .offset
+                .map(|o| PageToken::new(o).encode())
+                .unwrap_or(String::default()),
         }))
     }
 
@@ -202,7 +207,7 @@ impl Publisher for PublisherService {
         _request: Request<ListTopicSnapshotsRequest>,
     ) -> Result<Response<ListTopicSnapshotsResponse>, Status> {
         Err(Status::unimplemented(
-            "list_topic_snapshots is not implemented in Deltio",
+            "ListTopic_snapshots is not implemented in Deltio",
         ))
     }
 
@@ -229,7 +234,7 @@ impl Publisher for PublisherService {
         _request: Request<DetachSubscriptionRequest>,
     ) -> Result<Response<DetachSubscriptionResponse>, Status> {
         Err(Status::unimplemented(
-            "detach_subscription is not implemented in Deltio",
+            "DetachSubscription is not implemented in Deltio",
         ))
     }
 }
@@ -242,7 +247,7 @@ fn closed_status() -> Status {
 #[inline]
 fn topic_not_found(topic_name: &TopicName) -> Status {
     Status::not_found(format!(
-        "Topic does not exist (resource={})",
+        "Resource not found (resource={}).",
         &topic_name.topic_id()
     ))
 }

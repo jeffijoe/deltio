@@ -35,6 +35,13 @@ pub enum PublishMessagesError {
     Closed,
 }
 
+/// Errors for listing subscriptions.
+#[derive(thiserror::Error, Debug)]
+pub enum ListSubscriptionsError {
+    #[error("The topic is closed")]
+    Closed,
+}
+
 /// Errors for attaching a subscription.
 #[derive(thiserror::Error, Debug)]
 pub enum AttachSubscriptionError {
