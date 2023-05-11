@@ -7,7 +7,7 @@ use std::sync::Arc;
 /// Provides an interface over the topic manager actor.
 pub struct TopicManager {
     /// The topics state.
-    state: RwLock<State>,
+    state: Arc<RwLock<State>>,
 }
 
 /// The topic manager internal state.
@@ -18,18 +18,26 @@ struct State {
     pub next_id: u32,
 }
 
+/// Provides callbacks from the topic actor to the topic manager,
+/// such as for topic deletion.
+pub struct TopicManagerDelegate {
+    /// The topics state.
+    state: Arc<RwLock<State>>,
+}
+
 impl TopicManager {
     /// Creates a new `TopicManager`.
     pub fn new() -> Self {
         Self {
-            state: RwLock::new(State::new()),
+            state: Arc::new(RwLock::new(State::new())),
         }
     }
 
     /// Create a new topic.
     pub fn create_topic(&self, name: TopicName) -> Result<Arc<Topic>, CreateTopicError> {
+        let delegate = TopicManagerDelegate::new(Arc::clone(&self.state));
         let mut state = self.state.write();
-        state.create_topic(name)
+        state.create_topic(name, delegate)
     }
 
     /// Gets a topic.
@@ -114,18 +122,35 @@ impl State {
     /// Creates a new `Topic`.
     ///
     /// This is implemented here for interior mutability.
-    pub fn create_topic(&mut self, name: TopicName) -> Result<Arc<Topic>, CreateTopicError> {
+    pub fn create_topic(
+        &mut self,
+        name: TopicName,
+        delegate: TopicManagerDelegate,
+    ) -> Result<Arc<Topic>, CreateTopicError> {
         if let Entry::Vacant(entry) = self.topics.entry(name.clone()) {
             let topic_info = TopicInfo::new(name);
             self.next_id += 1;
             let internal_id = self.next_id;
-            let topic = Arc::new(Topic::new(topic_info, internal_id));
+            let topic = Arc::new(Topic::new(delegate, topic_info, internal_id));
 
             entry.insert(Arc::clone(&topic));
             return Ok(topic);
         }
 
         Err(CreateTopicError::AlreadyExists)
+    }
+}
+
+impl TopicManagerDelegate {
+    /// Creates a new `TopicManagerDelegate`.
+    fn new(state: Arc<RwLock<State>>) -> Self {
+        Self { state }
+    }
+
+    /// Delete the topic from the state.
+    pub fn delete(&self, topic_name: &TopicName) {
+        let mut state = self.state.write();
+        state.topics.remove(topic_name);
     }
 }
 

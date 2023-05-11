@@ -1,6 +1,8 @@
 use crate::subscriptions::{PostMessagesError, Subscription, SubscriptionName};
+use crate::topics::errors::*;
+use crate::topics::topic_manager::TopicManagerDelegate;
 use crate::topics::topic_message::{MessageId, TopicMessage};
-use crate::topics::{AttachSubscriptionError, PublishMessagesError, RemoveSubscriptionError};
+use crate::topics::TopicName;
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -23,6 +25,10 @@ pub enum TopicRequest {
         name: SubscriptionName,
         responder: oneshot::Sender<Result<(), RemoveSubscriptionError>>,
     },
+
+    Delete {
+        responder: oneshot::Sender<Result<(), DeleteError>>,
+    },
 }
 
 /// Response for publishing messages.
@@ -33,6 +39,9 @@ pub struct PublishMessagesResponse {
 
 /// Manages the topic.
 pub struct TopicActor {
+    /// The topic name.
+    name: TopicName,
+
     /// The messages that have been published to the topic.
     /// Since messages can be big, they are passed around as references.
     messages: Vec<Arc<TopicMessage>>,
@@ -40,21 +49,34 @@ pub struct TopicActor {
     /// The list of attached subscriptions for the topic.
     subscriptions: HashMap<SubscriptionName, Arc<Subscription>>,
 
+    // Delegate to the topic manager.
+    delegate: TopicManagerDelegate,
+
     // The internal ID of the topic.
     topic_internal_id: u32,
 
     // Used to generate message IDs.
     next_message_id: u32,
+
+    /// Whether the topic has been deleted.
+    deleted: bool,
 }
 
 impl TopicActor {
-    pub fn start(topic_internal_id: u32) -> mpsc::Sender<TopicRequest> {
-        let (sender, mut receiver) = mpsc::channel(2048);
+    pub fn start(
+        delegate: TopicManagerDelegate,
+        name: TopicName,
+        topic_internal_id: u32,
+    ) -> mpsc::Sender<TopicRequest> {
+        let (sender, mut receiver) = mpsc::channel(16);
         let mut actor = Self {
             topic_internal_id,
+            delegate,
+            name,
             messages: Default::default(),
             next_message_id: 0,
             subscriptions: Default::default(),
+            deleted: false,
         };
 
         tokio::spawn(async move {
@@ -86,6 +108,11 @@ impl TopicActor {
 
             TopicRequest::RemoveSubscription { name, responder } => {
                 let result = self.remove_subscription(name);
+                let _ = responder.send(result);
+            }
+
+            TopicRequest::Delete { responder } => {
+                let result = self.delete();
                 let _ = responder.send(result);
             }
         }
@@ -168,6 +195,26 @@ impl TopicActor {
     ) -> Result<(), RemoveSubscriptionError> {
         // Remove the subscription. This is called from the `Subscription` itself.
         self.subscriptions.remove(&name);
+        Ok(())
+    }
+
+    fn delete(&mut self) -> Result<(), DeleteError> {
+        if self.deleted {
+            return Ok(());
+        }
+
+        // Mark the topic as deleted.
+        self.deleted = true;
+
+        // Remove all subscriptions.
+        self.subscriptions.clear();
+
+        // Remove all messages.
+        self.messages.clear();
+
+        // Report deletion.
+        self.delegate.delete(&self.name);
+
         Ok(())
     }
 }

@@ -9,7 +9,7 @@ pub enum CreateTopicError {
 }
 
 /// Errors for getting a topic.
-#[derive(thiserror::Error, Debug)]
+#[derive(thiserror::Error, Debug, PartialEq)]
 pub enum GetTopicError {
     #[error("The topic does not exists")]
     DoesNotExist,
@@ -45,6 +45,13 @@ pub enum AttachSubscriptionError {
 /// Errors for removing a subscription.
 #[derive(thiserror::Error, Debug)]
 pub enum RemoveSubscriptionError {
+    #[error("The topic is closed")]
+    Closed,
+}
+
+/// Errors for deleting a topic.
+#[derive(thiserror::Error, Debug)]
+pub enum DeleteError {
     #[error("The topic is closed")]
     Closed,
 }

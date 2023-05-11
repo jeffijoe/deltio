@@ -1,7 +1,8 @@
-use deltio::pubsub_proto::{GetTopicRequest, ListTopicsRequest, Topic};
+use deltio::pubsub_proto::{DeleteTopicRequest, GetTopicRequest, ListTopicsRequest, Topic};
 use deltio::topics::TopicName;
 use std::collections::HashMap;
 use test_helpers::*;
+use tonic::Code;
 use uuid::Uuid;
 
 pub mod test_helpers;
@@ -115,6 +116,42 @@ async fn test_list() {
     server.dispose().await;
 }
 
+#[tokio::test]
+async fn test_delete() {
+    let mut server = TestHost::start().await.unwrap();
+    let topic_name = TopicName::new("test", &Uuid::new_v4().to_string());
+
+    // Create the topic.
+    server.create_topic_with_name(&topic_name).await;
+
+    // Verify we can retrieve it.
+    server
+        .publisher
+        .get_topic(GetTopicRequest {
+            topic: topic_name.to_string(),
+        })
+        .await
+        .unwrap();
+
+    // Delete it.
+    server
+        .publisher
+        .delete_topic(DeleteTopicRequest {
+            topic: topic_name.to_string(),
+        })
+        .await
+        .unwrap();
+
+    // Verify it's gone.
+    let status = server
+        .publisher
+        .get_topic(GetTopicRequest {
+            topic: topic_name.to_string(),
+        })
+        .await
+        .unwrap_err();
+    assert_eq!(status.code(), Code::NotFound);
+}
 // Actors: Creating took 244.654333ms, Getting page 2 took 2.243458ms
 // RwLock: Creating took 222.814875ms, Getting page 2 took 2.857791ms
 // #[tokio::test]

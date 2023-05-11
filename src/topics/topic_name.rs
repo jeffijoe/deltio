@@ -21,6 +21,14 @@ impl TopicName {
         }
     }
 
+    /// Returns the `TopicName` for a deleted topic.
+    pub fn deleted() -> TopicName {
+        Self {
+            project_id: "".into(),
+            topic_id: "_deleted_topic_".into(),
+        }
+    }
+
     /// Attempts to parse a topic name.
     pub fn try_parse(unparsed: &str) -> Option<Self> {
         // Check that the length of the input is at least as long as something that contains
@@ -51,6 +59,11 @@ impl TopicName {
     /// Returns whether the topic is in the given project.
     pub fn is_in_project(&self, project_id: &str) -> bool {
         &*self.project_id == project_id
+    }
+
+    /// Returns the topic ID.
+    pub fn topic_id(&self) -> String {
+        self.topic_id.to_string()
     }
 }
 

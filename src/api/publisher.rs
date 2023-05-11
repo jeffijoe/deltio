@@ -3,7 +3,9 @@ use crate::api::parser;
 use crate::pubsub_proto::publisher_server::Publisher;
 use crate::pubsub_proto::*;
 use crate::topics::topic_manager::TopicManager;
-use crate::topics::{CreateTopicError, GetTopicError, ListTopicsError, PublishMessagesError};
+use crate::topics::{
+    CreateTopicError, DeleteError, GetTopicError, ListTopicsError, PublishMessagesError,
+};
 use crate::topics::{TopicMessage, TopicName};
 use bytes::Bytes;
 use std::collections::HashMap;
@@ -27,7 +29,7 @@ impl PublisherService {
         self.topic_manager
             .get_topic(topic_name)
             .map_err(|e| match e {
-                GetTopicError::DoesNotExist => Status::failed_precondition("Topic does not exist"),
+                GetTopicError::DoesNotExist => topic_not_found(topic_name),
                 GetTopicError::Closed => Status::internal("System is shutting down"),
             })
     }
@@ -71,7 +73,9 @@ impl Publisher for PublisherService {
         &self,
         _request: Request<UpdateTopicRequest>,
     ) -> Result<Response<Topic>, Status> {
-        todo!()
+        Err(Status::unimplemented(
+            "update_topic is not implemented in Deltio",
+        ))
     }
 
     async fn publish(
@@ -98,10 +102,8 @@ impl Publisher for PublisherService {
             .await
             .map_err(|e| match e {
                 // TODO: Verify what the real Pub/Sub service returns.
-                PublishMessagesError::TopicDoesNotExist => {
-                    Status::not_found("The topic does not exist")
-                }
-                PublishMessagesError::Closed => Status::internal("The system is shutting down"),
+                PublishMessagesError::TopicDoesNotExist => topic_not_found(&topic_name),
+                PublishMessagesError::Closed => closed_status(),
             })?;
 
         let response = Response::new(PublishResponse {
@@ -159,7 +161,7 @@ impl Publisher for PublisherService {
                 page_token_value.map(|v| v.value),
             )
             .map_err(|e| match e {
-                ListTopicsError::Closed => Status::internal("System is shutting down"),
+                ListTopicsError::Closed => closed_status(),
             })?;
 
         let topics = page
@@ -199,14 +201,26 @@ impl Publisher for PublisherService {
         &self,
         _request: Request<ListTopicSnapshotsRequest>,
     ) -> Result<Response<ListTopicSnapshotsResponse>, Status> {
-        todo!()
+        Err(Status::unimplemented(
+            "list_topic_snapshots is not implemented in Deltio",
+        ))
     }
 
     async fn delete_topic(
         &self,
-        _request: Request<DeleteTopicRequest>,
+        request: Request<DeleteTopicRequest>,
     ) -> Result<Response<()>, Status> {
-        // TODO: Implement
+        let request = request.get_ref();
+
+        let topic_name = parser::parse_topic_name(&request.topic)?;
+        println!("{}: deleting topic", &topic_name);
+
+        let topic = self.get_topic_internal(&topic_name).await?;
+
+        topic.delete().await.map_err(|e| match e {
+            DeleteError::Closed => closed_status(),
+        })?;
+
         Ok(Response::new(()))
     }
 
@@ -214,6 +228,21 @@ impl Publisher for PublisherService {
         &self,
         _request: Request<DetachSubscriptionRequest>,
     ) -> Result<Response<DetachSubscriptionResponse>, Status> {
-        todo!()
+        Err(Status::unimplemented(
+            "detach_subscription is not implemented in Deltio",
+        ))
     }
+}
+
+#[inline]
+fn closed_status() -> Status {
+    Status::internal("System is shutting down")
+}
+
+#[inline]
+fn topic_not_found(topic_name: &TopicName) -> Status {
+    Status::not_found(format!(
+        "Topic does not exist (resource={})",
+        &topic_name.topic_id()
+    ))
 }

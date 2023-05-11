@@ -6,12 +6,12 @@ use crate::subscriptions::{
     AckId, AcknowledgeMessagesError, DeadlineModification, PulledMessage, SubscriptionInfo,
     SubscriptionStats,
 };
-use crate::topics::{RemoveSubscriptionError, Topic, TopicMessage};
+use crate::topics::{RemoveSubscriptionError, Topic, TopicMessage, TopicName};
 use futures::future::Shared;
 use futures::FutureExt;
 use parking_lot::Mutex;
 use std::collections::{hash_map, HashMap};
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 use std::time::{Duration, SystemTime};
 use tokio::sync::{mpsc, oneshot, Notify};
 
@@ -46,8 +46,9 @@ pub enum SubscriptionRequest {
 /// Actor for the subscription.
 pub(crate) struct SubscriptionActor {
     /// The topic that the subscription is attached to.
+    /// We use a weak reference because the topic may be deleted.
     #[allow(dead_code)]
-    topic: Arc<Topic>,
+    topic: Weak<Topic>,
 
     /// Info about the subscription.
     info: SubscriptionInfo,
@@ -79,12 +80,12 @@ impl SubscriptionActor {
         observer: Arc<SubscriptionObserver>,
         delegate: SubscriptionManagerDelegate,
     ) -> mpsc::Sender<SubscriptionRequest> {
-        let (sender, mut receiver) = mpsc::channel(2048);
+        let (sender, mut receiver) = mpsc::channel(16);
         let mut actor = Self {
-            topic,
             info,
             observer,
             delegate,
+            topic: Arc::downgrade(&topic),
             backlog: Messages::new(),
             outstanding: HashMap::new(),
             next_ack_id: AckId::new(1),
@@ -113,24 +114,24 @@ impl SubscriptionActor {
     async fn receive(&mut self, request: SubscriptionRequest) {
         match request {
             SubscriptionRequest::PostMessages { messages } => {
-                self.post_messages(messages).await;
+                self.post_messages(messages);
             }
             SubscriptionRequest::PullMessages {
                 max_count,
                 responder,
             } => {
-                let result = self.pull_messages(max_count).await;
+                let result = self.pull_messages(max_count);
                 let _ = responder.send(result);
             }
             SubscriptionRequest::AcknowledgeMessages { ack_ids, responder } => {
-                let result = self.acknowledge_messages(ack_ids).await;
+                let result = self.acknowledge_messages(ack_ids);
                 let _ = responder.send(result);
             }
             SubscriptionRequest::ModifyDeadline {
                 deadline_modifications,
                 responder,
             } => {
-                let result = self.modify_deadline(deadline_modifications).await;
+                let result = self.modify_deadline(deadline_modifications);
                 let _ = responder.send(result);
             }
             SubscriptionRequest::Delete { responder } => {
@@ -138,14 +139,14 @@ impl SubscriptionActor {
                 let _ = responder.send(result);
             }
             SubscriptionRequest::GetStats { responder } => {
-                let result = self.get_stats().await;
+                let result = self.get_stats();
                 let _ = responder.send(result);
             }
         }
     }
 
     /// Posts new messages to the subscription.
-    async fn post_messages(&mut self, new_messages: Vec<Arc<TopicMessage>>) {
+    fn post_messages(&mut self, new_messages: Vec<Arc<TopicMessage>>) {
         if self.deleted {
             return;
         }
@@ -156,10 +157,7 @@ impl SubscriptionActor {
 
     /// Pulls messages from the subscription, marking them as outstanding so they won't be
     /// delivered to anyone else.
-    async fn pull_messages(
-        &mut self,
-        max_count: u16,
-    ) -> Result<Vec<PulledMessage>, PullMessagesError> {
+    fn pull_messages(&mut self, max_count: u16) -> Result<Vec<PulledMessage>, PullMessagesError> {
         if self.deleted {
             return Ok(Default::default());
         }
@@ -196,7 +194,7 @@ impl SubscriptionActor {
     }
 
     /// Acknowledges messages that have been pulled.
-    async fn acknowledge_messages(
+    fn acknowledge_messages(
         &mut self,
         ack_ids: Vec<AckId>,
     ) -> Result<(), AcknowledgeMessagesError> {
@@ -217,7 +215,7 @@ impl SubscriptionActor {
     }
 
     /// Modifies the deadline for messages that have been pulled.
-    async fn modify_deadline(
+    fn modify_deadline(
         &mut self,
         deadline_modifications: Vec<DeadlineModification>,
     ) -> Result<(), ModifyDeadlineError> {
@@ -251,12 +249,17 @@ impl SubscriptionActor {
         }
 
         self.deleted = true;
-        self.topic
-            .remove_subscription(self.info.name.clone())
-            .await
-            .map_err(|e| match e {
-                RemoveSubscriptionError::Closed => DeleteError::Closed,
-            })?;
+
+        // If the topic is still around, remove ourselves from it's list of subscriptions.
+        if let Some(topic) = self.topic.upgrade() {
+            topic
+                .remove_subscription(self.info.name.clone())
+                .await
+                .map_err(|e| match e {
+                    RemoveSubscriptionError::Closed => DeleteError::Closed,
+                })?;
+        }
+
         self.delegate.delete(&self.info.name);
         self.observer.notify_deleted();
 
@@ -264,10 +267,13 @@ impl SubscriptionActor {
     }
 
     /// Gets the stats for the subscription.
-    async fn get_stats(&mut self) -> Result<SubscriptionStats, GetStatsError> {
+    fn get_stats(&mut self) -> Result<SubscriptionStats, GetStatsError> {
         let stats = SubscriptionStats::new(
             self.info.name.clone(),
-            self.topic.info.name.clone(),
+            self.topic
+                .upgrade()
+                .map(|t| t.info.name.clone())
+                .unwrap_or_else(TopicName::deleted),
             self.outstanding.len(),
             self.backlog.len(),
         );

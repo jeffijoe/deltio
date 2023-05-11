@@ -1,6 +1,7 @@
 use crate::subscriptions::{Subscription, SubscriptionName};
 use crate::topics::errors::*;
 use crate::topics::topic_actor::{PublishMessagesResponse, TopicActor, TopicRequest};
+use crate::topics::topic_manager::TopicManagerDelegate;
 use crate::topics::{TopicMessage, TopicName};
 use std::cmp::Ordering;
 use std::sync::Arc;
@@ -8,6 +9,7 @@ use tokio::sync::{mpsc, oneshot};
 
 /// The `Topic` that we interact with.
 /// Any mutable state is kept within the actor.
+#[derive(Debug)]
 pub struct Topic {
     /// Info about the topic, such as its' name.
     pub info: TopicInfo,
@@ -21,7 +23,7 @@ pub struct Topic {
 }
 
 /// Provides information about the topic.
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct TopicInfo {
     /// The name of the topic.
     pub name: TopicName,
@@ -29,8 +31,8 @@ pub struct TopicInfo {
 
 impl Topic {
     /// Creates a new `Topic`.
-    pub fn new(info: TopicInfo, internal_id: u32) -> Self {
-        let sender = TopicActor::start(internal_id);
+    pub fn new(delegate: TopicManagerDelegate, info: TopicInfo, internal_id: u32) -> Self {
+        let sender = TopicActor::start(delegate, info.name.clone(), internal_id);
         Self {
             info,
             internal_id,
@@ -88,6 +90,17 @@ impl Topic {
             .await
             .map_err(|_| RemoveSubscriptionError::Closed)?;
         recv.await.map_err(|_| RemoveSubscriptionError::Closed)?
+    }
+
+    /// Deletes the topic.
+    pub async fn delete(&self) -> Result<(), DeleteError> {
+        let (send, recv) = oneshot::channel();
+        let request = TopicRequest::Delete { responder: send };
+        self.sender
+            .send(request)
+            .await
+            .map_err(|_| DeleteError::Closed)?;
+        recv.await.map_err(|_| DeleteError::Closed)?
     }
 }
 
