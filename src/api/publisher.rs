@@ -48,8 +48,7 @@ impl Publisher for PublisherService {
             .create_topic(topic_name)
             .map_err(|e| match e {
                 CreateTopicError::AlreadyExists => Status::already_exists("Topic already exists"),
-                // TODO: Figure out a more generic way to handle this.
-                CreateTopicError::Closed => Status::internal("System is shutting down"),
+                CreateTopicError::Closed => conflict(),
             })?;
 
         let response = Topic {
@@ -103,7 +102,7 @@ impl Publisher for PublisherService {
             .await
             .map_err(|e| match e {
                 PublishMessagesError::TopicDoesNotExist => topic_not_found(&topic_name),
-                PublishMessagesError::Closed => closed_status(),
+                PublishMessagesError::Closed => conflict(),
             })?;
 
         let response = Response::new(PublishResponse {
@@ -146,7 +145,7 @@ impl Publisher for PublisherService {
             .topic_manager
             .list_topics(Box::from(request.project.clone()), paging)
             .map_err(|e| match e {
-                ListTopicsError::Closed => closed_status(),
+                ListTopicsError::Closed => conflict(),
             })?;
 
         let topics = page
@@ -186,7 +185,7 @@ impl Publisher for PublisherService {
             .list_subscriptions(paging)
             .await
             .map_err(|e| match e {
-                ListSubscriptionsError::Closed => closed_status(),
+                ListSubscriptionsError::Closed => conflict(),
             })?;
 
         Ok(Response::new(ListTopicSubscriptionsResponse {
@@ -223,7 +222,7 @@ impl Publisher for PublisherService {
         let topic = self.get_topic_internal(&topic_name).await?;
 
         topic.delete().await.map_err(|e| match e {
-            DeleteError::Closed => closed_status(),
+            DeleteError::Closed => conflict(),
         })?;
 
         Ok(Response::new(()))
@@ -239,11 +238,15 @@ impl Publisher for PublisherService {
     }
 }
 
+/// Status for when returned errors indicate that the resource is no longer
+/// accepting requests, which usually indicates that it has been deleted, or
+/// that the system is currently shutting down. The former is more likely.
 #[inline]
-fn closed_status() -> Status {
-    Status::internal("System is shutting down")
+fn conflict() -> Status {
+    Status::failed_precondition("The operation resulted in a conflict.")
 }
 
+/// Returns a status indicating that the resource was not found.
 #[inline]
 fn topic_not_found(topic_name: &TopicName) -> Status {
     Status::not_found(format!(

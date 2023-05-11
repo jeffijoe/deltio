@@ -60,7 +60,7 @@ impl Subscriber for SubscriberService {
                 GetTopicError::DoesNotExist => {
                     Status::not_found(format!("The topic {} does not exist", &topic_name))
                 }
-                GetTopicError::Closed => closed_status(),
+                GetTopicError::Closed => conflict(),
             })?;
 
         let subscription = self
@@ -75,7 +75,7 @@ impl Subscriber for SubscriberService {
                 CreateSubscriptionError::MustBeInSameProjectAsTopic => Status::invalid_argument(
                     "The subscription must be in the same project as the topic",
                 ),
-                CreateSubscriptionError::Closed => closed_status(),
+                CreateSubscriptionError::Closed => conflict(),
             })?;
         println!(
             "{}: creating subscription took {:?}",
@@ -101,7 +101,7 @@ impl Subscriber for SubscriberService {
                     "The subscription {} does not exist",
                     &subscription_name
                 )),
-                GetSubscriptionError::Closed => closed_status(),
+                GetSubscriptionError::Closed => conflict(),
             })?;
 
         Ok(Response::new(map_to_subscription_resource(&subscription)))
@@ -127,7 +127,7 @@ impl Subscriber for SubscriberService {
             .subscription_manager
             .list_subscriptions_in_project(Box::from(request.project.clone()), paging)
             .map_err(|e| match e {
-                ListSubscriptionsError::Closed => closed_status(),
+                ListSubscriptionsError::Closed => conflict(),
             })?;
 
         let subscriptions = page
@@ -154,7 +154,7 @@ impl Subscriber for SubscriberService {
 
         println!("{}: deleting subscription", &subscription_name);
         subscription.delete().await.map_err(|e| match e {
-            DeleteError::Closed => closed_status(),
+            DeleteError::Closed => conflict(),
         })?;
 
         Ok(Response::new(()))
@@ -230,7 +230,7 @@ impl Subscriber for SubscriberService {
             .pull_messages(request.max_messages as u16)
             .await
             .map_err(|e| match e {
-                PullMessagesError::Closed => closed_status(),
+                PullMessagesError::Closed => conflict(),
             })?;
 
         // Map them to the protocol format.
@@ -274,8 +274,12 @@ impl Subscriber for SubscriberService {
         // Pulls messages and streams them to the client.
         let pull_stream = {
             let subscription = Arc::clone(&subscription);
+            let max_count: u16 = request.max_outstanding_messages.try_into().map_err(|_| {
+                Status::invalid_argument("max_outstanding_messages is out of range")
+            })?;
 
             async_stream::try_stream! {
+                // TODO: Respect the max_* settings if possible?
                 let mut was_deleted = false;
                 while !was_deleted {
                     // First, subscribe to the messages signal so that
@@ -287,7 +291,7 @@ impl Subscriber for SubscriberService {
                     let deleted = subscription.deleted();
 
                     // Then, pull the available messages from the subscription.
-                    let pulled = match subscription.pull_messages(10).await {
+                    let pulled = match subscription.pull_messages(max_count).await {
                         Err(PullMessagesError::Closed) => return,
                         Ok(pulled) => pulled,
                     };
@@ -532,15 +536,19 @@ fn map_to_subscription_resource(subscription: &crate::subscriptions::Subscriptio
     }
 }
 
+/// Status for when returned errors indicate that the resource is no longer
+/// accepting requests, which usually indicates that it has been deleted, or
+/// that the system is currently shutting down. The former is more likely.
+#[inline]
+fn conflict() -> Status {
+    Status::failed_precondition("The operation resulted in a conflict.")
+}
+
+/// Returns a status indicating that the resource was not found.
 #[inline]
 fn subscription_not_found(subscription_name: &SubscriptionName) -> Status {
     Status::not_found(format!(
         "Resource not found (resource={}).",
         &subscription_name.subscription_id()
     ))
-}
-
-#[inline]
-fn closed_status() -> Status {
-    Status::internal("System is shutting down")
 }

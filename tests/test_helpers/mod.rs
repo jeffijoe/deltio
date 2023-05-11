@@ -115,10 +115,7 @@ impl TestHost {
     ) -> Subscription {
         let response = self
             .subscriber
-            .create_subscription(map_to_subscription_resource(
-                subscription_name,
-                topic_name,
-            ))
+            .create_subscription(map_to_subscription_resource(subscription_name, topic_name))
             .await
             .unwrap();
         response.get_ref().clone()
@@ -172,7 +169,6 @@ impl TestHost {
                     modify_deadline_ack_ids: vec![],
                     stream_ack_deadline_seconds: 0,
                     client_id,
-                    // TODO: Respect these
                     max_outstanding_messages: 100,
                     max_outstanding_bytes: 100_000_000,
                 };
