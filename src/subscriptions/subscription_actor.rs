@@ -1,16 +1,16 @@
 use crate::collections::Messages;
 use crate::subscriptions::errors::*;
 use crate::subscriptions::futures::{Deleted, MessagesAvailable};
+use crate::subscriptions::outstanding::OutstandingMessageTracker;
 use crate::subscriptions::subscription_manager::SubscriptionManagerDelegate;
 use crate::subscriptions::{
-    AckId, AcknowledgeMessagesError, DeadlineModification, PulledMessage, SubscriptionInfo,
-    SubscriptionStats,
+    AckDeadline, AckId, AcknowledgeMessagesError, DeadlineModification, PulledMessage,
+    SubscriptionInfo, SubscriptionStats,
 };
 use crate::topics::{RemoveSubscriptionError, Topic, TopicMessage, TopicName};
 use futures::future::Shared;
 use futures::FutureExt;
 use parking_lot::Mutex;
-use std::collections::{hash_map, HashMap};
 use std::sync::{Arc, Weak};
 use std::time::{Duration, SystemTime};
 use tokio::sync::{mpsc, oneshot, Notify};
@@ -57,7 +57,7 @@ pub(crate) struct SubscriptionActor {
     backlog: Messages,
 
     /// A map of messages have been pulled but not acked/nacked yet.
-    outstanding: HashMap<AckId, PulledMessage>,
+    outstanding: OutstandingMessageTracker,
 
     /// An observer to notify of various things such as new messages being available.
     observer: Arc<SubscriptionObserver>,
@@ -87,7 +87,7 @@ impl SubscriptionActor {
             delegate,
             topic: Arc::downgrade(&topic),
             backlog: Messages::new(),
-            outstanding: HashMap::new(),
+            outstanding: OutstandingMessageTracker::new(),
             next_ack_id: AckId::new(1),
             deleted: false,
         };
@@ -96,11 +96,17 @@ impl SubscriptionActor {
             let deleted = actor.observer.deleted();
             let poll = async {
                 loop {
-                    while let Some(request) = receiver.recv().await {
-                        actor.receive(request).await
+                    tokio::select! {
+                        Some(request) = receiver.recv() => {
+                            actor.receive(request).await
+                        },
+                        Some(expired) = actor.outstanding.poll_next() => {
+                            actor.handle_expired_messages(expired);
+                        }
                     }
                 }
             };
+
             tokio::select! {
                 _ = deleted => (),
                 _ = poll => (),
@@ -173,12 +179,12 @@ impl SubscriptionActor {
             // TODO: Compute based on subscription message ack deadline.
             // TODO: Handle deadline expiration.
             let deadline = SystemTime::now() + Duration::from_secs(10);
-
+            let deadline = AckDeadline::new(&deadline);
             let pulled_message = PulledMessage::new(Arc::clone(&message), ack_id, deadline, 1);
             result.push(pulled_message.clone());
 
             // Track the outstanding message so we can ACK it later (and also expire it).
-            self.outstanding.insert(ack_id, pulled_message);
+            self.outstanding.add(pulled_message);
 
             if result.len() >= capacity {
                 break;
@@ -202,14 +208,9 @@ impl SubscriptionActor {
             return Ok(());
         }
 
-        ack_ids
-            .iter()
-            .for_each(|ack_id| match self.outstanding.entry(*ack_id) {
-                hash_map::Entry::Vacant(_) => (),
-                hash_map::Entry::Occupied(occupied) => {
-                    occupied.remove();
-                }
-            });
+        ack_ids.iter().for_each(|ack_id| {
+            self.outstanding.remove(ack_id);
+        });
 
         Ok(())
     }
@@ -262,6 +263,8 @@ impl SubscriptionActor {
 
         self.delegate.delete(&self.info.name);
         self.observer.notify_deleted();
+        self.outstanding.clear();
+        self.backlog.clear();
 
         Ok(())
     }
@@ -280,16 +283,22 @@ impl SubscriptionActor {
         Ok(stats)
     }
 
+    /// Handles expired messages by putting them back into the backlog.
+    fn handle_expired_messages(&mut self, expired: Vec<PulledMessage>) {
+        self.backlog
+            .append(expired.into_iter().map(|p| p.into_message()));
+
+        if !self.backlog.is_empty() {
+            self.observer.notify_new_messages_available();
+        }
+    }
+
     /// NACKs the outstanding message referred to by `ack_id` and returns it.
     #[inline]
     fn nack_message(&mut self, ack_id: AckId) -> Option<Arc<TopicMessage>> {
-        let entry = match self.outstanding.entry(ack_id) {
-            hash_map::Entry::Vacant(_) => return None,
-            hash_map::Entry::Occupied(occupied) => occupied,
-        };
+        let pulled = self.outstanding.remove(&ack_id)?;
 
-        let message = Arc::clone(entry.get().message());
-        entry.remove();
+        let message = Arc::clone(pulled.message());
         Some(message)
     }
 }

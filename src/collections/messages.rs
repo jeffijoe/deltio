@@ -58,6 +58,12 @@ impl Messages {
             message
         })
     }
+
+    /// Clears all the messages.
+    pub fn clear(&mut self) {
+        self.map.clear();
+        self.list.clear();
+    }
 }
 
 #[cfg(test)]

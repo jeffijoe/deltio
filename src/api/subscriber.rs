@@ -97,10 +97,7 @@ impl Subscriber for SubscriberService {
             .subscription_manager
             .get_subscription(&subscription_name)
             .map_err(|e| match e {
-                GetSubscriptionError::DoesNotExist => Status::not_found(format!(
-                    "The subscription {} does not exist",
-                    &subscription_name
-                )),
+                GetSubscriptionError::DoesNotExist => subscription_not_found(&subscription_name),
                 GetSubscriptionError::Closed => conflict(),
             })?;
 
@@ -412,7 +409,9 @@ impl Subscriber for SubscriberService {
     }
 }
 
-/// Handles the control message for a streaming pull request.    
+/// Handles the control message for a streaming pull request.
+///
+/// This is only called for **subsequent** requests on the incoming stream.
 async fn handle_streaming_pull_request(
     request: StreamingPullRequest,
     subscription: Arc<crate::subscriptions::Subscription>,
@@ -453,7 +452,7 @@ async fn handle_streaming_pull_request(
             .acknowledge_messages(ack_ids)
             .await
             .map_err(|e| match e {
-                AcknowledgeMessagesError::Closed => Status::cancelled("System is shutting down"),
+                AcknowledgeMessagesError::Closed => conflict(),
             })?;
     }
 
@@ -470,10 +469,12 @@ async fn handle_streaming_pull_request(
             .modify_ack_deadlines(deadline_modifications)
             .await
             .map_err(|e| match e {
-                ModifyDeadlineError::Closed => Status::cancelled("System is shutting down"),
+                ModifyDeadlineError::Closed => conflict(),
             })?;
     }
 
+    // We never actually return any responses, but it helps with the necessary type inference
+    // for the async stream.
     Ok(None)
 }
 
@@ -508,16 +509,19 @@ fn map_to_received_message(m: &PulledMessage) -> ReceivedMessage {
     }
 }
 
+/// Maps the subscription to a subscription resource.
 fn map_to_subscription_resource(subscription: &crate::subscriptions::Subscription) -> Subscription {
+    // The topic is stored as a weak reference on the subscription.
+    // If it's no longer alive, then the topic was deleted.
+    let topic_name = subscription
+        .topic
+        .upgrade()
+        .map(|t| t.info.name.to_string())
+        .unwrap_or_else(|| "_deleted_topic_".to_string());
+
     Subscription {
         name: subscription.info.name.to_string(),
-        // The topic is stored as a weak reference on the subscription.
-        // If it's no longer alive, then the topic was deleted.
-        topic: subscription
-            .topic
-            .upgrade()
-            .map(|t| t.info.name.to_string())
-            .unwrap_or("_deleted_topic_".to_string()),
+        topic: topic_name,
         push_config: None,
         bigquery_config: None,
         ack_deadline_seconds: 10,

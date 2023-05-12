@@ -1,7 +1,7 @@
 use std::fmt::{Display, Formatter};
 
 /// Acknowledgement ID used for acknowledging and negative-acknowledging messages.
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Copy, Clone, PartialEq, PartialOrd, Ord, Eq, Hash)]
 pub struct AckId {
     value: u64,
 }
