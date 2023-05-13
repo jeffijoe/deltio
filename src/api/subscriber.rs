@@ -516,11 +516,11 @@ fn map_to_subscription_resource(subscription: &crate::subscriptions::Subscriptio
     let topic_name = subscription
         .topic
         .upgrade()
-        .map(|t| t.info.name.to_string())
+        .map(|t| t.name.to_string())
         .unwrap_or_else(|| "_deleted_topic_".to_string());
 
     Subscription {
-        name: subscription.info.name.to_string(),
+        name: subscription.name.to_string(),
         topic: topic_name,
         push_config: None,
         bigquery_config: None,

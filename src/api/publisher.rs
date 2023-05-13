@@ -124,7 +124,7 @@ impl Publisher for PublisherService {
         let topic = self.get_topic_internal(&topic_name).await?;
 
         Ok(Response::new(Topic {
-            name: topic.info.name.to_string(),
+            name: topic.name.to_string(),
             labels: Default::default(),
             message_storage_policy: None,
             kms_key_name: "".to_string(),
@@ -152,7 +152,7 @@ impl Publisher for PublisherService {
             .topics
             .into_iter()
             .map(|topic| Topic {
-                name: topic.info.name.to_string(),
+                name: topic.name.to_string(),
                 labels: HashMap::default(),
                 message_storage_policy: None,
                 kms_key_name: "".to_string(),
@@ -192,7 +192,7 @@ impl Publisher for PublisherService {
             subscriptions: page
                 .subscriptions
                 .iter()
-                .map(|s| s.info.name.to_string())
+                .map(|s| s.name.to_string())
                 .collect(),
             next_page_token: page
                 .offset

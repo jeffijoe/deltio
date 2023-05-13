@@ -44,7 +44,7 @@ impl SubscriptionManager {
         topic: Arc<Topic>,
     ) -> Result<Arc<Subscription>, CreateSubscriptionError> {
         // Topics and subscriptions must be in the same project.
-        if !topic.info.name.is_in_project(name.project_id()) {
+        if !topic.name.is_in_project(name.project_id()) {
             return Err(CreateSubscriptionError::MustBeInSameProjectAsTopic);
         }
 
@@ -97,7 +97,7 @@ impl SubscriptionManager {
             let subscriptions = state
                 .subscriptions
                 .values()
-                .filter(|t| t.info.name.is_in_project(&project_id))
+                .filter(|t| t.name.is_in_project(&project_id))
                 .cloned()
                 .collect::<Vec<_>>();
             subscriptions

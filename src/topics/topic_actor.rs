@@ -4,7 +4,7 @@ use crate::subscriptions::{PostMessagesError, Subscription, SubscriptionName};
 use crate::topics::errors::*;
 use crate::topics::topic_manager::TopicManagerDelegate;
 use crate::topics::topic_message::{MessageId, TopicMessage};
-use crate::topics::TopicName;
+use crate::topics::TopicInfo;
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -46,8 +46,8 @@ pub struct PublishMessagesResponse {
 
 /// Manages the topic.
 pub struct TopicActor {
-    /// The topic name.
-    name: TopicName,
+    /// Information about the topic.
+    info: TopicInfo,
 
     /// The messages that have been published to the topic.
     /// Since messages can be big, they are passed around as references.
@@ -72,14 +72,14 @@ pub struct TopicActor {
 impl TopicActor {
     pub fn start(
         delegate: TopicManagerDelegate,
-        name: TopicName,
+        info: TopicInfo,
         topic_internal_id: u32,
     ) -> mpsc::Sender<TopicRequest> {
         let (sender, mut receiver) = mpsc::channel(16);
         let mut actor = Self {
             topic_internal_id,
             delegate,
-            name,
+            info,
             messages: Default::default(),
             next_message_id: 0,
             subscriptions: Default::default(),
@@ -221,7 +221,7 @@ impl TopicActor {
         subscription: Arc<Subscription>,
     ) -> Result<(), AttachSubscriptionError> {
         // Insert the subscription.
-        if let Entry::Vacant(entry) = self.subscriptions.entry(subscription.info.name.clone()) {
+        if let Entry::Vacant(entry) = self.subscriptions.entry(subscription.name.clone()) {
             entry.insert(subscription);
         }
 
@@ -252,7 +252,7 @@ impl TopicActor {
         self.messages.clear();
 
         // Report deletion.
-        self.delegate.delete(&self.name);
+        self.delegate.delete(&self.info.name);
 
         Ok(())
     }

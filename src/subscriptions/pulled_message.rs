@@ -1,7 +1,8 @@
 use crate::subscriptions::AckId;
 use crate::topics::TopicMessage;
+use lazy_static::lazy_static;
 use std::sync::Arc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
 /// A message that has been pulled.
 #[derive(Debug, Clone)]
@@ -20,6 +21,11 @@ pub struct PulledMessage {
     delivery_attempt: u16,
 }
 
+lazy_static! {
+    /// Used as a baseline to calculate durations in order to round.
+    static ref EPOCH: Instant = Instant::now();
+}
+
 /// Represents the deadline by which a message should be acked before it is considered expired.
 ///
 /// These are rounded up to the nearest 10th of a second in order to capture as many expirations
@@ -27,7 +33,7 @@ pub struct PulledMessage {
 #[derive(Debug, Copy, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub struct AckDeadline {
     /// The actual deadline time.
-    time: SystemTime,
+    time: Instant,
 }
 
 impl PulledMessage {
@@ -74,26 +80,26 @@ impl PulledMessage {
 
 impl AckDeadline {
     /// Creates a new `AckDeadline`.
-    pub fn new(time: &SystemTime) -> Self {
+    pub fn new(time: &Instant) -> Self {
         // Round up to nearest 100th millisecond
         static PRECISION_MICROS: u64 = 100_000;
 
-        let duration_since_epoch = time.duration_since(UNIX_EPOCH).unwrap();
+        let duration_since_epoch = time.duration_since(*EPOCH);
         let time_in_micros = duration_since_epoch.as_micros() as u64;
         let rounded_in_micros = time_in_micros % PRECISION_MICROS;
-        let rounded_time = UNIX_EPOCH
+        let rounded_time = EPOCH
             .checked_add(Duration::from_micros(time_in_micros + rounded_in_micros))
             .unwrap();
         Self { time: rounded_time }
     }
 
     /// Gets the time.
-    pub fn time(&self) -> SystemTime {
+    pub fn time(&self) -> Instant {
         self.time
     }
 }
 
-impl From<AckDeadline> for SystemTime {
+impl From<AckDeadline> for Instant {
     fn from(value: AckDeadline) -> Self {
         value.time()
     }
@@ -105,21 +111,13 @@ mod tests {
 
     #[test]
     fn new_rounds() {
-        let input = SystemTime::UNIX_EPOCH
-            .checked_add(Duration::from_millis(50))
-            .unwrap();
-        let expected = SystemTime::UNIX_EPOCH
-            .checked_add(Duration::from_millis(100))
-            .unwrap();
+        let input = EPOCH.checked_add(Duration::from_millis(50)).unwrap();
+        let expected = EPOCH.checked_add(Duration::from_millis(100)).unwrap();
         let actual = AckDeadline::new(&input);
         assert_eq!(actual.time(), expected);
 
-        let input = SystemTime::UNIX_EPOCH
-            .checked_add(Duration::from_millis(150))
-            .unwrap();
-        let expected = SystemTime::UNIX_EPOCH
-            .checked_add(Duration::from_millis(200))
-            .unwrap();
+        let input = EPOCH.checked_add(Duration::from_millis(150)).unwrap();
+        let expected = EPOCH.checked_add(Duration::from_millis(200)).unwrap();
         let actual = AckDeadline::new(&input);
         assert_eq!(actual.time(), expected);
     }

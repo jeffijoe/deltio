@@ -72,7 +72,7 @@ impl TopicManager {
             let topics = state
                 .topics
                 .values()
-                .filter(|t| t.info.name.is_in_project(&project_id))
+                .filter(|t| t.name.is_in_project(&project_id))
                 .cloned()
                 .collect::<Vec<_>>();
             topics

@@ -1,3 +1,5 @@
+use crate::paging::Paging;
+use crate::subscriptions::paging::SubscriptionsPage;
 use crate::subscriptions::{Subscription, SubscriptionName};
 use crate::topics::errors::*;
 use crate::topics::topic_actor::{PublishMessagesResponse, TopicActor, TopicRequest};
@@ -6,15 +8,13 @@ use crate::topics::{TopicMessage, TopicName};
 use std::cmp::Ordering;
 use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot};
-use crate::paging::Paging;
-use crate::subscriptions::paging::SubscriptionsPage;
 
 /// The `Topic` that we interact with.
 /// Any mutable state is kept within the actor.
 #[derive(Debug)]
 pub struct Topic {
-    /// Info about the topic, such as its' name.
-    pub info: TopicInfo,
+    /// Name of the topic.
+    pub name: TopicName,
 
     /// The internal ID of the topic which is an auto-incrementing
     /// number.
@@ -34,9 +34,10 @@ pub struct TopicInfo {
 impl Topic {
     /// Creates a new `Topic`.
     pub fn new(delegate: TopicManagerDelegate, info: TopicInfo, internal_id: u32) -> Self {
-        let sender = TopicActor::start(delegate, info.name.clone(), internal_id);
+        let name = info.name.clone();
+        let sender = TopicActor::start(delegate, info, internal_id);
         Self {
-            info,
+            name,
             internal_id,
             sender,
         }
@@ -58,14 +59,17 @@ impl Topic {
             .map_err(|_| PublishMessagesError::Closed)?;
         recv.await.map_err(|_| PublishMessagesError::Closed)?
     }
-    
+
     /// Lists subscriptions in the topic.
     pub async fn list_subscriptions(
         &self,
-        paging: Paging
+        paging: Paging,
     ) -> Result<SubscriptionsPage, ListSubscriptionsError> {
         let (send, recv) = oneshot::channel();
-        let request = TopicRequest::ListSubscriptions { paging, responder: send };
+        let request = TopicRequest::ListSubscriptions {
+            paging,
+            responder: send,
+        };
         self.sender
             .send(request)
             .await

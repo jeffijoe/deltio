@@ -1,6 +1,6 @@
 use crate::subscriptions::{AckDeadline, AckId, PulledMessage};
 use std::collections::{BTreeSet, HashMap};
-use std::time::SystemTime;
+use std::time::Instant;
 use tokio::sync::Notify;
 
 /// Keeps track of pulled messages and their deadlines.
@@ -33,19 +33,30 @@ impl OutstandingMessageTracker {
     pub fn add(&mut self, message: PulledMessage) {
         let expiration_key = (*message.deadline(), message.ack_id());
         self.messages.insert(message.ack_id(), message);
+
+        // Before inserting into the expirations set, check whether this new key
+        // is less than the first one. If it is, then we need to notify any polling listeners
+        // that there is a new first expiration.
+        let should_notify = self
+            .expirations
+            .first()
+            .map(|e| &expiration_key < e)
+            .unwrap_or(false);
+
         self.expirations.insert(expiration_key);
-        self.notify.notify_waiters();
+
+        if should_notify {
+            self.notify.notify_waiters();
+        }
     }
 
     /// Returns the next expiration.
-    #[allow(dead_code)]
     pub fn next_expiration(&self) -> Option<AckDeadline> {
         self.expirations.first().map(|s| s.0)
     }
 
     /// Takes all the messages from the tracker that have expired since or at the given [`time`].
-    #[allow(dead_code)]
-    pub fn take_expired(&mut self, time: &SystemTime) -> Vec<PulledMessage> {
+    pub fn take_expired(&mut self, time: &Instant) -> Vec<PulledMessage> {
         let mut result = Vec::new();
         while let Some(key) = self.expirations.first() {
             // If the time has not elapsed, then we are done since the expirations are ordered.
@@ -68,16 +79,35 @@ impl OutstandingMessageTracker {
         result
     }
 
-    /// Removes the message with the given ack ID.
-    pub fn remove(&mut self, ack_id: &AckId) -> Option<PulledMessage> {
-        if let Some(message) = self.messages.remove(ack_id) {
-            let expiration_key = (*message.deadline(), message.ack_id());
-            self.expirations.remove(&expiration_key);
-            self.notify.notify_waiters();
-            return Some(message);
+    /// Removes messages with the given ack IDs produced by the iterator.
+    pub fn remove<I>(&mut self, ack_ids: I) -> Vec<PulledMessage>
+    where
+        I: Iterator<Item = AckId>,
+    {
+        let mut should_notify = false;
+        let mut result = Vec::new();
+        let first_expiration_key = self.expirations.first().cloned();
+        for ack_id in ack_ids {
+            if let Some(message) = self.messages.remove(&ack_id) {
+                let expiration_key = (*message.deadline(), message.ack_id());
+                if !should_notify {
+                    // If we are removing a key that is equal
+                    // to the first expiration key, then we need to notify waiters.
+                    should_notify = first_expiration_key
+                        .map(|e| expiration_key == e)
+                        .unwrap_or(false)
+                }
+
+                self.expirations.remove(&expiration_key);
+                result.push(message);
+            }
         }
 
-        None
+        if should_notify {
+            self.notify.notify_one();
+        }
+
+        result
     }
 
     /// Clears the contents of the tracker.
@@ -92,10 +122,10 @@ impl OutstandingMessageTracker {
         self.messages.len()
     }
 
-    /// Polls for the next batch of expired deadlines.
-    pub async fn poll_next(&mut self) -> Option<Vec<PulledMessage>> {
+    /// Polls for the next batch of expired messages.
+    pub async fn next_expired(&mut self) -> Option<Vec<PulledMessage>> {
         loop {
-            let now = SystemTime::now();
+            let now = Instant::now();
             let taken = self.take_expired(&now);
             if !taken.is_empty() {
                 return Some(taken);
@@ -103,12 +133,11 @@ impl OutstandingMessageTracker {
 
             let notified = self.notify.notified();
             if let Some(next_expiration) = self.next_expiration() {
-                let when = std::time::Instant::now();
-                // TODO: Use actual expiration.
+                let when = next_expiration.time();
                 tokio::select! {
                     _ = notified => {},
                     _ = tokio::time::sleep_until(when.into()) => {}
-                };
+                }
             } else {
                 notified.await;
             }
@@ -121,8 +150,13 @@ mod tests {
     use super::*;
     use crate::topics::TopicMessage;
     use bytes::Bytes;
+    use lazy_static::lazy_static;
     use std::sync::Arc;
-    use std::time::{Duration, UNIX_EPOCH};
+    use std::time::Duration;
+
+    lazy_static! {
+        static ref EPOCH: Instant = Instant::now();
+    }
 
     #[test]
     fn take_expired() {
@@ -165,6 +199,22 @@ mod tests {
         assert_eq!(expired.len(), 0);
     }
 
+    #[test]
+    fn remove_iter() {
+        let mut tracker = OutstandingMessageTracker::new();
+        tracker.add(new_pulled_message(3, 1)); // #1
+        tracker.add(new_pulled_message(4, 2)); // #2
+        tracker.add(new_pulled_message(1, 3)); // #3
+        tracker.add(new_pulled_message(2, 3)); // #4
+
+        // Remove all except #4
+        tracker.remove(vec![AckId::new(1), AckId::new(3), AckId::new(4)].into_iter());
+
+        // Verify the last one left is the one representing #4.
+        assert_eq!(tracker.len(), 1);
+        assert_eq!(tracker.next_expiration().unwrap(), deadline_for(3));
+    }
+
     /// Helper for creating a pulled message.
     fn new_pulled_message(ack_id: u64, time: u64) -> PulledMessage {
         let message = Arc::new(TopicMessage::new(Bytes::from("hello")));
@@ -175,6 +225,6 @@ mod tests {
     }
 
     fn deadline_for(time: u64) -> AckDeadline {
-        AckDeadline::new(&UNIX_EPOCH.checked_add(Duration::from_secs(time)).unwrap())
+        AckDeadline::new(&EPOCH.checked_add(Duration::from_secs(time)).unwrap())
     }
 }

@@ -12,7 +12,7 @@ use futures::future::Shared;
 use futures::FutureExt;
 use parking_lot::Mutex;
 use std::sync::{Arc, Weak};
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, oneshot, Notify};
 
 /// The max amount of messages that can be pulled.
@@ -100,7 +100,7 @@ impl SubscriptionActor {
                         Some(request) = receiver.recv() => {
                             actor.receive(request).await
                         },
-                        Some(expired) = actor.outstanding.poll_next() => {
+                        Some(expired) = actor.outstanding.next_expired() => {
                             actor.handle_expired_messages(expired);
                         }
                     }
@@ -172,13 +172,14 @@ impl SubscriptionActor {
         let capacity = max_count.clamp(0, outgoing_len.max(MAX_PULL_COUNT)) as usize;
         let mut result = Vec::with_capacity(capacity);
 
+        let now = Instant::now();
+        // TODO: Compute based on subscription message ack deadline.
+        let deadline = now + Duration::from_secs(10);
         while let Some(message) = self.backlog.pop_front() {
             let ack_id = self.next_ack_id;
             self.next_ack_id = ack_id.next();
 
-            // TODO: Compute based on subscription message ack deadline.
             // TODO: Handle deadline expiration.
-            let deadline = SystemTime::now() + Duration::from_secs(10);
             let deadline = AckDeadline::new(&deadline);
             let pulled_message = PulledMessage::new(Arc::clone(&message), ack_id, deadline, 1);
             result.push(pulled_message.clone());
@@ -208,9 +209,7 @@ impl SubscriptionActor {
             return Ok(());
         }
 
-        ack_ids.iter().for_each(|ack_id| {
-            self.outstanding.remove(ack_id);
-        });
+        self.outstanding.remove(ack_ids.into_iter());
 
         Ok(())
     }
@@ -224,16 +223,22 @@ impl SubscriptionActor {
             return Ok(());
         }
 
-        let nacks = deadline_modifications
+        let nacks =
+            deadline_modifications
+                .into_iter()
+                .filter_map(|modification| match modification.new_deadline {
+                    Some(_) => {
+                        eprintln!("Deadline extension not supported yet");
+                        None
+                    }
+                    None => Some(modification.ack_id),
+                });
+
+        let nacks = self
+            .outstanding
+            .remove(nacks)
             .into_iter()
-            .filter_map(|modification| match modification.new_deadline {
-                Some(_) => {
-                    eprintln!("Deadline extension not supported yet");
-                    None
-                }
-                None => self.nack_message(modification.ack_id),
-            })
-            .collect::<Vec<_>>();
+            .map(|pulled| pulled.into_message());
 
         self.backlog.append(nacks);
         if !self.backlog.is_empty() {
@@ -275,7 +280,7 @@ impl SubscriptionActor {
             self.info.name.clone(),
             self.topic
                 .upgrade()
-                .map(|t| t.info.name.clone())
+                .map(|t| t.name.clone())
                 .unwrap_or_else(TopicName::deleted),
             self.outstanding.len(),
             self.backlog.len(),
@@ -292,15 +297,15 @@ impl SubscriptionActor {
             self.observer.notify_new_messages_available();
         }
     }
-
-    /// NACKs the outstanding message referred to by `ack_id` and returns it.
-    #[inline]
-    fn nack_message(&mut self, ack_id: AckId) -> Option<Arc<TopicMessage>> {
-        let pulled = self.outstanding.remove(&ack_id)?;
-
-        let message = Arc::clone(pulled.message());
-        Some(message)
-    }
+    //
+    // /// NACKs the outstanding message referred to by `ack_id` and returns it.
+    // #[inline]
+    // fn nack_message(&mut self, ack_id: AckId) -> Option<Arc<TopicMessage>> {
+    //     let pulled = self.outstanding.remove(&ack_id)?;
+    //
+    //     let message = Arc::clone(pulled.message());
+    //     Some(message)
+    // }
 }
 
 /// Observer for propagating signals to the `Subscription`.

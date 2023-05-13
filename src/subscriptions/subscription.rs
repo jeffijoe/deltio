@@ -15,8 +15,8 @@ use tokio::sync::{mpsc, oneshot};
 
 /// Represents a subscription.
 pub struct Subscription {
-    /// Info for the subscription, used mostly for reads.
-    pub info: SubscriptionInfo,
+    /// Name of the subscription, used mostly for reads.
+    pub name: SubscriptionName,
 
     /// A reference to the attached topic.
     pub topic: Weak<Topic>,
@@ -48,11 +48,11 @@ impl Subscription {
         let observer = Arc::new(SubscriptionObserver::new());
 
         // Create the actor, pass in the observer.
-        let sender =
-            SubscriptionActor::start(info.clone(), topic.clone(), Arc::clone(&observer), delegate);
+        let name = info.name.clone();
+        let sender = SubscriptionActor::start(info, topic.clone(), Arc::clone(&observer), delegate);
         let topic = Arc::downgrade(&topic);
         Self {
-            info,
+            name,
             topic,
             sender,
             internal_id,

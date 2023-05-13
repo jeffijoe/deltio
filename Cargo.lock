@@ -141,6 +141,7 @@ dependencies = [
  "bytes",
  "env_logger",
  "futures",
+ "lazy_static",
  "parking_lot",
  "prost",
  "prost-types",
