@@ -1,8 +1,10 @@
 use crate::api::page_token::PageToken;
 use crate::paging::Paging;
-use crate::subscriptions::{AckId, AckIdParseError, DeadlineModification, SubscriptionName};
+use crate::subscriptions::{
+    AckDeadline, AckId, AckIdParseError, DeadlineModification, SubscriptionName,
+};
 use crate::topics::TopicName;
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, Instant};
 use tonic::Status;
 
 /// Parses the topic name.
@@ -35,6 +37,8 @@ pub(crate) fn parse_deadline_extension_duration(
         v if v < 0 => Err(Status::invalid_argument(
             "Seconds must not be less than zero",
         )),
+        // Max is 600 seconds (10 minutes)
+        v if v >= 600 => Ok(Some(Duration::from_secs(600))),
         0 => Ok(None),
         _ => Ok(Some(Duration::from_secs(raw_value as u64))),
     }
@@ -42,7 +46,7 @@ pub(crate) fn parse_deadline_extension_duration(
 
 /// Parses a list of deadline modifications.
 pub(crate) fn parse_deadline_modifications(
-    now: SystemTime,
+    now: Instant,
     ack_ids: &[String],
     modify_deadline_seconds: &[i32],
 ) -> Result<Vec<DeadlineModification>, Status> {
@@ -53,7 +57,10 @@ pub(crate) fn parse_deadline_modifications(
             let ack_id = parse_ack_id(ack_id)?;
             let seconds = parse_deadline_extension_duration(*seconds)?;
             let modification = match seconds {
-                Some(seconds) => DeadlineModification::new(ack_id, now + seconds),
+                Some(seconds) => {
+                    let deadline = now + seconds;
+                    DeadlineModification::new(ack_id, AckDeadline::new(&deadline))
+                }
                 None => DeadlineModification::nack(ack_id),
             };
             Ok(modification)

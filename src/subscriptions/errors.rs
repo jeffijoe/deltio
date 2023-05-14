@@ -28,6 +28,13 @@ pub enum ListSubscriptionsError {
     Closed,
 }
 
+/// Errors for getting subscription info.
+#[derive(thiserror::Error, Debug)]
+pub enum GetInfoError {
+    #[error("The subscription is closed")]
+    Closed,
+}
+
 /// Errors for posting messages.
 #[derive(thiserror::Error, Debug)]
 pub enum PostMessagesError {

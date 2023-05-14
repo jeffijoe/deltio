@@ -40,11 +40,11 @@ impl SubscriptionManager {
     /// Create a new subscription.
     pub async fn create_subscription(
         &self,
-        name: SubscriptionName,
+        info: SubscriptionInfo,
         topic: Arc<Topic>,
     ) -> Result<Arc<Subscription>, CreateSubscriptionError> {
         // Topics and subscriptions must be in the same project.
-        if !topic.name.is_in_project(name.project_id()) {
+        if !topic.name.is_in_project(info.name.project_id()) {
             return Err(CreateSubscriptionError::MustBeInSameProjectAsTopic);
         }
 
@@ -53,7 +53,7 @@ impl SubscriptionManager {
             let mut state = self.state.write();
             // Create a delegate that the subscription can use to call back out.
             let delegate = SubscriptionManagerDelegate::new(Arc::clone(&self.state));
-            state.create_subscription(name, topic.clone(), delegate)?
+            state.create_subscription(info, topic.clone(), delegate)?
         };
 
         topic
@@ -141,16 +141,15 @@ impl State {
     /// Creates a new `Subscription`.
     pub fn create_subscription(
         &mut self,
-        name: SubscriptionName,
+        info: SubscriptionInfo,
         topic: Arc<Topic>,
         delegate: SubscriptionManagerDelegate,
     ) -> Result<Arc<Subscription>, CreateSubscriptionError> {
-        if let Entry::Vacant(entry) = self.subscriptions.entry(name.clone()) {
-            let subscription_info = SubscriptionInfo::new(name);
+        if let Entry::Vacant(entry) = self.subscriptions.entry(info.name.clone()) {
             self.next_id += 1;
             let internal_id = self.next_id;
             let subscription = Arc::new(Subscription::new(
-                subscription_info,
+                info,
                 internal_id,
                 topic,
                 delegate,

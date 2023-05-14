@@ -1,4 +1,5 @@
-use crate::subscriptions::{AckDeadline, AckId, PulledMessage};
+use crate::subscriptions::{AckDeadline, AckId, DeadlineModification, PulledMessage};
+use std::collections::hash_map::Entry;
 use std::collections::{BTreeSet, HashMap};
 use std::time::Instant;
 use tokio::sync::Notify;
@@ -89,7 +90,7 @@ impl OutstandingMessageTracker {
         let first_expiration_key = self.expirations.first().cloned();
         for ack_id in ack_ids {
             if let Some(message) = self.messages.remove(&ack_id) {
-                let expiration_key = (*message.deadline(), message.ack_id());
+                let expiration_key = message.expiration_key();
                 if !should_notify {
                     // If we are removing a key that is equal
                     // to the first expiration key, then we need to notify waiters.
@@ -104,7 +105,63 @@ impl OutstandingMessageTracker {
         }
 
         if should_notify {
-            self.notify.notify_one();
+            self.notify.notify_waiters();
+        }
+
+        result
+    }
+
+    /// Given a list of modifications, removes and re-adds the ack IDs
+    /// based on the new deadline. If there is no new deadline, then
+    /// the message is NACK'ed. All NACK'ed messages will be returned.
+    pub fn modify(&mut self, modifications: Vec<DeadlineModification>) -> Vec<PulledMessage> {
+        let mut result = Vec::new();
+        let current_first_expiration = self.expirations.first().cloned();
+        let mut should_notify = false;
+        for mut modification in modifications {
+            // Remove the message since we'll need to modify it and add it back.
+            if let Entry::Occupied(mut entry) = self.messages.entry(modification.ack_id) {
+                // Check if this message was the upcoming expiration. If it was, we need to
+                // notify waiters.
+                let message = entry.get_mut();
+                let current_expiration_key = message.expiration_key();
+                if !should_notify
+                    && current_first_expiration
+                        .map(|e| current_expiration_key == e)
+                        .unwrap_or(false)
+                {
+                    should_notify = true;
+                }
+
+                // Remove the existing expiration, if any.
+                self.expirations.remove(&current_expiration_key);
+
+                // If we are extending the deadline, modify the deadline on
+                // the pulled message and add a new expiration entry.
+                // If the new entry's expiration is earlier than the current
+                // upcoming one, we need to notify.
+                if let Some(new_deadline) = modification.new_deadline.take() {
+                    message.modify_deadline(new_deadline);
+                    let expiration_key = message.expiration_key();
+                    if !should_notify
+                        && current_first_expiration
+                            .map(|e| e > expiration_key)
+                            .unwrap_or(false)
+                    {
+                        should_notify = true;
+                    }
+                    println!("Extending dawg, should: {}", &should_notify);
+                    self.expirations.insert(expiration_key);
+                } else {
+                    // The message is being NACK'ed, remove the entry from the tracker.
+                    let message = entry.remove();
+                    result.push(message);
+                }
+            }
+        }
+
+        if should_notify {
+            self.notify.notify_waiters();
         }
 
         result

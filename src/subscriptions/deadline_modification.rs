@@ -1,16 +1,15 @@
-use crate::subscriptions::AckId;
-use std::time::SystemTime;
+use crate::subscriptions::{AckDeadline, AckId};
 
 /// A requested modification to the deadline of an acknowledgement.
 #[derive(Debug)]
 pub struct DeadlineModification {
     pub ack_id: AckId,
-    pub new_deadline: Option<SystemTime>,
+    pub new_deadline: Option<AckDeadline>,
 }
 
 impl DeadlineModification {
     /// Creates a new `DeadlineModification`.
-    pub fn new(ack_id: AckId, new_deadline: SystemTime) -> Self {
+    pub fn new(ack_id: AckId, new_deadline: AckDeadline) -> Self {
         Self {
             ack_id,
             new_deadline: Some(new_deadline),

@@ -224,3 +224,45 @@ pub fn map_to_subscription_resource(
         state: 0,
     }
 }
+
+/// Constructs a streaming ACK request.
+pub fn streaming_ack(ack_ids: Vec<String>) -> StreamingPullRequest {
+    StreamingPullRequest {
+        ack_ids,
+        subscription: Default::default(),
+        modify_deadline_seconds: vec![],
+        modify_deadline_ack_ids: vec![],
+        stream_ack_deadline_seconds: 0,
+        client_id: Default::default(),
+        max_outstanding_messages: 0,
+        max_outstanding_bytes: 0,
+    }
+}
+
+/// Constructs a streaming NACK request.
+pub fn streaming_nack(ack_ids: Vec<String>) -> StreamingPullRequest {
+    StreamingPullRequest {
+        ack_ids: Default::default(),
+        modify_deadline_seconds: ack_ids.iter().map(|_| 0).collect(),
+        modify_deadline_ack_ids: ack_ids,
+        subscription: Default::default(),
+        stream_ack_deadline_seconds: 0,
+        client_id: Default::default(),
+        max_outstanding_messages: 0,
+        max_outstanding_bytes: 0,
+    }
+}
+
+/// Constructs a streaming modify ack deadlines request.
+pub fn streaming_modify_ack_deadline(ack_ids: Vec<String>, seconds: i32) -> StreamingPullRequest {
+    StreamingPullRequest {
+        ack_ids: Default::default(),
+        modify_deadline_seconds: ack_ids.iter().map(|_| seconds).collect(),
+        modify_deadline_ack_ids: ack_ids,
+        subscription: Default::default(),
+        stream_ack_deadline_seconds: 0,
+        client_id: Default::default(),
+        max_outstanding_messages: 0,
+        max_outstanding_bytes: 0,
+    }
+}

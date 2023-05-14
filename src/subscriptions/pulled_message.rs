@@ -72,9 +72,19 @@ impl PulledMessage {
         &self.deadline
     }
 
+    /// Creates an expiration key for this message.
+    pub fn expiration_key(&self) -> (AckDeadline, AckId) {
+        (*self.deadline(), self.ack_id)
+    }
+
     /// Gets the delivery attempt.
     pub fn delivery_attempt(&self) -> u16 {
         self.delivery_attempt
+    }
+
+    /// Modifies the deadline of this message.
+    pub fn modify_deadline(&mut self, new_deadline: AckDeadline) {
+        self.deadline = new_deadline;
     }
 }
 

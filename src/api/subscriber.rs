@@ -11,15 +11,16 @@ use crate::pubsub_proto::{
 };
 use crate::subscriptions::subscription_manager::SubscriptionManager;
 use crate::subscriptions::{
-    AcknowledgeMessagesError, CreateSubscriptionError, DeleteError, GetSubscriptionError,
-    ListSubscriptionsError, ModifyDeadlineError, PullMessagesError, PulledMessage,
-    SubscriptionName,
+    AcknowledgeMessagesError, CreateSubscriptionError, DeleteError, GetInfoError,
+    GetSubscriptionError, ListSubscriptionsError, ModifyDeadlineError, PullMessagesError,
+    PulledMessage, SubscriptionInfo, SubscriptionName,
 };
 use crate::topics::topic_manager::TopicManager;
 use crate::topics::GetTopicError;
 use futures::Stream;
 use std::pin::Pin;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio_stream::StreamExt;
 use tonic::{Request, Response, Status, Streaming};
 
@@ -52,6 +53,11 @@ impl Subscriber for SubscriberService {
 
         let topic_name = parser::parse_topic_name(&request.topic)?;
         let subscription_name = parser::parse_subscription_name(&request.name)?;
+        let ack_deadline = match request.ack_deadline_seconds {
+            v if v <= 10 => Duration::from_secs(10),
+            _ => Duration::from_secs(request.ack_deadline_seconds as u64),
+        };
+        let subscription_info = SubscriptionInfo::new(subscription_name.clone(), ack_deadline);
 
         let topic = self
             .topic_manager
@@ -65,24 +71,32 @@ impl Subscriber for SubscriberService {
 
         let subscription = self
             .subscription_manager
-            .create_subscription(subscription_name.clone(), topic.clone())
+            .create_subscription(subscription_info, topic.clone())
             .await
             .map_err(|e| match e {
                 CreateSubscriptionError::AlreadyExists => Status::already_exists(format!(
                     "The subscription {} already exists",
-                    subscription_name
+                    &subscription_name
                 )),
                 CreateSubscriptionError::MustBeInSameProjectAsTopic => Status::invalid_argument(
                     "The subscription must be in the same project as the topic",
                 ),
                 CreateSubscriptionError::Closed => conflict(),
             })?;
+
+        // Retrieve the info from the create subscription, in case any changes were made.
+        let subscription_info = subscription.get_info().await.map_err(|e| match e {
+            GetInfoError::Closed => conflict(),
+        })?;
         println!(
             "{}: creating subscription took {:?}",
             subscription_name.clone(),
             start.elapsed()
         );
-        Ok(Response::new(map_to_subscription_resource(&subscription)))
+        Ok(Response::new(map_to_subscription_resource(
+            &subscription,
+            &subscription_info,
+        )))
     }
 
     async fn get_subscription(
@@ -101,7 +115,14 @@ impl Subscriber for SubscriberService {
                 GetSubscriptionError::Closed => conflict(),
             })?;
 
-        Ok(Response::new(map_to_subscription_resource(&subscription)))
+        let info = subscription.get_info().await.map_err(|e| match e {
+            GetInfoError::Closed => conflict(),
+        })?;
+
+        Ok(Response::new(map_to_subscription_resource(
+            &subscription,
+            &info,
+        )))
     }
 
     async fn update_subscription(
@@ -127,11 +148,19 @@ impl Subscriber for SubscriberService {
                 ListSubscriptionsError::Closed => conflict(),
             })?;
 
-        let subscriptions = page
-            .subscriptions
-            .into_iter()
-            .map(|s| map_to_subscription_resource(&s))
-            .collect();
+        let subscriptions = futures::future::try_join_all(
+            // Retrieve info for each subscription.
+            page.subscriptions
+                .into_iter()
+                .map(|subscription| async move {
+                    let info = subscription.get_info().await.map_err(|e| match e {
+                        GetInfoError::Closed => conflict(),
+                    })?;
+
+                    Ok::<Subscription, Status>(map_to_subscription_resource(&subscription, &info))
+                }),
+        )
+        .await?;
 
         let page_token = page.offset.map(|v| PageToken::new(v).encode());
         let response = ListSubscriptionsResponse {
@@ -162,7 +191,7 @@ impl Subscriber for SubscriberService {
         request: Request<ModifyAckDeadlineRequest>,
     ) -> Result<Response<()>, Status> {
         let request = request.get_ref();
-        let now = std::time::SystemTime::now();
+        let now = std::time::Instant::now();
         let deadline_modifications = parser::parse_deadline_modifications(
             now,
             &request.ack_ids,
@@ -458,7 +487,7 @@ async fn handle_streaming_pull_request(
 
     // Extend deadlines if requested to do so.
     if !request.modify_deadline_ack_ids.is_empty() {
-        let now = std::time::SystemTime::now();
+        let now = std::time::Instant::now();
         let deadline_modifications = parser::parse_deadline_modifications(
             now,
             &request.modify_deadline_ack_ids,
@@ -510,7 +539,10 @@ fn map_to_received_message(m: &PulledMessage) -> ReceivedMessage {
 }
 
 /// Maps the subscription to a subscription resource.
-fn map_to_subscription_resource(subscription: &crate::subscriptions::Subscription) -> Subscription {
+fn map_to_subscription_resource(
+    subscription: &crate::subscriptions::Subscription,
+    info: &SubscriptionInfo,
+) -> Subscription {
     // The topic is stored as a weak reference on the subscription.
     // If it's no longer alive, then the topic was deleted.
     let topic_name = subscription
@@ -524,7 +556,7 @@ fn map_to_subscription_resource(subscription: &crate::subscriptions::Subscriptio
         topic: topic_name,
         push_config: None,
         bigquery_config: None,
-        ack_deadline_seconds: 10,
+        ack_deadline_seconds: info.ack_deadline.as_secs() as i32,
         retain_acked_messages: false,
         message_retention_duration: None,
         labels: Default::default(),

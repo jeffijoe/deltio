@@ -1,6 +1,6 @@
 use bytes::Bytes;
 use deltio::subscriptions::subscription_manager::SubscriptionManager;
-use deltio::subscriptions::SubscriptionName;
+use deltio::subscriptions::{SubscriptionInfo, SubscriptionName};
 use deltio::topics::topic_manager::TopicManager;
 use deltio::topics::{GetTopicError, TopicMessage, TopicName};
 use std::sync::Arc;
@@ -15,7 +15,10 @@ async fn delete_topic() {
 
     let topic = topic_manager.create_topic(topic_name.clone()).unwrap();
     let subscription = subscription_manager
-        .create_subscription(subscription_name, Arc::clone(&topic))
+        .create_subscription(
+            SubscriptionInfo::new_with_defaults(subscription_name),
+            Arc::clone(&topic),
+        )
         .await
         .unwrap();
 

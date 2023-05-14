@@ -12,7 +12,7 @@ use futures::future::Shared;
 use futures::FutureExt;
 use parking_lot::Mutex;
 use std::sync::{Arc, Weak};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 use tokio::sync::{mpsc, oneshot, Notify};
 
 /// The max amount of messages that can be pulled.
@@ -22,6 +22,9 @@ const MAX_PULL_COUNT: u16 = 1_000;
 pub enum SubscriptionRequest {
     PostMessages {
         messages: Vec<Arc<TopicMessage>>,
+    },
+    GetInfo {
+        responder: oneshot::Sender<Result<SubscriptionInfo, GetInfoError>>,
     },
     PullMessages {
         max_count: u16,
@@ -122,6 +125,10 @@ impl SubscriptionActor {
             SubscriptionRequest::PostMessages { messages } => {
                 self.post_messages(messages);
             }
+            SubscriptionRequest::GetInfo { responder } => {
+                let result = self.get_info();
+                let _ = responder.send(result);
+            }
             SubscriptionRequest::PullMessages {
                 max_count,
                 responder,
@@ -151,6 +158,11 @@ impl SubscriptionActor {
         }
     }
 
+    /// Gets info about the subscription.
+    fn get_info(&mut self) -> Result<SubscriptionInfo, GetInfoError> {
+        Ok(self.info.clone())
+    }
+
     /// Posts new messages to the subscription.
     fn post_messages(&mut self, new_messages: Vec<Arc<TopicMessage>>) {
         if self.deleted {
@@ -173,13 +185,11 @@ impl SubscriptionActor {
         let mut result = Vec::with_capacity(capacity);
 
         let now = Instant::now();
-        // TODO: Compute based on subscription message ack deadline.
-        let deadline = now + Duration::from_secs(10);
+        let deadline = now + self.info.ack_deadline;
         while let Some(message) = self.backlog.pop_front() {
             let ack_id = self.next_ack_id;
             self.next_ack_id = ack_id.next();
 
-            // TODO: Handle deadline expiration.
             let deadline = AckDeadline::new(&deadline);
             let pulled_message = PulledMessage::new(Arc::clone(&message), ack_id, deadline, 1);
             result.push(pulled_message.clone());
@@ -223,24 +233,9 @@ impl SubscriptionActor {
             return Ok(());
         }
 
-        let nacks =
-            deadline_modifications
-                .into_iter()
-                .filter_map(|modification| match modification.new_deadline {
-                    Some(_) => {
-                        eprintln!("Deadline extension not supported yet");
-                        None
-                    }
-                    None => Some(modification.ack_id),
-                });
-
-        let nacks = self
-            .outstanding
-            .remove(nacks)
-            .into_iter()
-            .map(|pulled| pulled.into_message());
-
-        self.backlog.append(nacks);
+        let nacks = self.outstanding.modify(deadline_modifications);
+        let messages_to_requeue = nacks.into_iter().map(|m| m.into_message());
+        self.backlog.append(messages_to_requeue);
         if !self.backlog.is_empty() {
             self.observer.notify_new_messages_available();
         }
@@ -290,6 +285,7 @@ impl SubscriptionActor {
 
     /// Handles expired messages by putting them back into the backlog.
     fn handle_expired_messages(&mut self, expired: Vec<PulledMessage>) {
+        println!("{}: {} messages expired", &self.info.name, expired.len());
         self.backlog
             .append(expired.into_iter().map(|p| p.into_message()));
 
@@ -297,15 +293,6 @@ impl SubscriptionActor {
             self.observer.notify_new_messages_available();
         }
     }
-    //
-    // /// NACKs the outstanding message referred to by `ack_id` and returns it.
-    // #[inline]
-    // fn nack_message(&mut self, ack_id: AckId) -> Option<Arc<TopicMessage>> {
-    //     let pulled = self.outstanding.remove(&ack_id)?;
-    //
-    //     let message = Arc::clone(pulled.message());
-    //     Some(message)
-    // }
 }
 
 /// Observer for propagating signals to the `Subscription`.

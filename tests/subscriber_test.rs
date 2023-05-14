@@ -1,11 +1,13 @@
 use deltio::pubsub_proto::{
     DeleteSubscriptionRequest, GetSubscriptionRequest, ListSubscriptionsRequest,
-    StreamingPullRequest, StreamingPullResponse,
+    StreamingPullResponse,
 };
 use deltio::subscriptions::SubscriptionName;
 use deltio::topics::TopicName;
 use futures::StreamExt;
+use std::time::Duration;
 use test_helpers::*;
+use tokio::time;
 use tonic::{Code, Status};
 use uuid::Uuid;
 
@@ -195,20 +197,13 @@ async fn test_streaming_pull() {
 
     // ACK the 2 messages.
     sender
-        .send(StreamingPullRequest {
-            subscription: Default::default(),
-            ack_ids: pull_response
+        .send(streaming_ack(
+            pull_response
                 .received_messages
                 .iter()
                 .map(|r| r.ack_id.clone())
                 .collect(),
-            modify_deadline_seconds: vec![],
-            modify_deadline_ack_ids: vec![],
-            stream_ack_deadline_seconds: 0,
-            client_id: Default::default(),
-            max_outstanding_messages: 0,
-            max_outstanding_bytes: 0,
-        })
+        ))
         .await
         .unwrap();
 
@@ -231,19 +226,12 @@ async fn test_streaming_pull() {
         .collect::<Vec<_>>();
 
     // NACK the messages so we receive them again.
-    sender
-        .send(StreamingPullRequest {
-            subscription: Default::default(),
-            ack_ids: Default::default(),
-            modify_deadline_seconds: ack_ids.iter().map(|_| 0).collect(),
-            modify_deadline_ack_ids: ack_ids,
-            stream_ack_deadline_seconds: 0,
-            client_id: Default::default(),
-            max_outstanding_messages: 0,
-            max_outstanding_bytes: 0,
-        })
-        .await
-        .unwrap();
+    sender.send(streaming_nack(ack_ids)).await.unwrap();
+
+    // Advance time to make sure the ones we ACKed do not appear again.
+    time::pause();
+    time::advance(Duration::from_secs(20)).await;
+    time::resume();
 
     // Pull all the messages again, we should get all the ones we nack'ed.
     let pull_response = inbound.next().await.unwrap().unwrap();
@@ -251,6 +239,87 @@ async fn test_streaming_pull() {
     assert_eq!(
         collect_text_messages(&pull_response),
         vec!["Woah", "Much Resilient"]
+    );
+}
+
+#[tokio::test]
+async fn test_streaming_pull_deadline_extension() {
+    let mut server = TestHost::start().await.unwrap();
+
+    // Create a topic to subscribe to.
+    let topic_name = TopicName::new("test", "topic");
+    server.create_topic_with_name(&topic_name).await;
+
+    // Create a subscription with the default ACK deadline of 10 seconds.
+    let subscription_name = SubscriptionName::new("test", "subscription");
+    server
+        .create_subscription_with_name(&topic_name, &subscription_name)
+        .await;
+
+    // Start polling for messages.
+    let (sender, mut inbound) = server.streaming_pull(&subscription_name).await;
+
+    // Publish some messages, wait for them to be retrieved.
+    server
+        .publish_text_messages(&topic_name, vec!["Hello".into(), "World".into()])
+        .await;
+
+    let pull_response = inbound.next().await.unwrap().unwrap();
+    assert_eq!(pull_response.received_messages.len(), 2);
+
+    let initial_message1 = pull_response.received_messages.get(0).unwrap().clone();
+    let initial_message2 = pull_response.received_messages.get(1).unwrap().clone();
+
+    // Extend the deadline 30 seconds for the 2nd message.
+    // That way, we can assert that the 1st message expires and is redelivered,
+    // and since the 2nd message won't be, that means the extension worked.
+    sender
+        .send(streaming_modify_ack_deadline(
+            vec![initial_message2.ack_id],
+            30,
+        ))
+        .await
+        .unwrap();
+
+    println!("we out here");
+
+    // Advance 20 seconds and check that the first message is redelivered due
+    // to not having been extended.
+    time::pause();
+    time::advance(Duration::from_secs(20)).await;
+    time::resume();
+
+    let pull_response = inbound.next().await.unwrap().unwrap();
+    assert_eq!(pull_response.received_messages.len(), 1);
+    let received = pull_response.received_messages.get(0).unwrap();
+    assert_eq!(
+        received.message.clone().unwrap().message_id,
+        initial_message1.message.unwrap().message_id
+    );
+
+    // Ack it so we don't receive it again.
+    sender
+        .send(streaming_ack(vec![received.ack_id.clone()]))
+        .await
+        .unwrap();
+
+    // Advance the remaining ~10 to receive the 2nd one again.
+    time::pause();
+    time::advance(Duration::from_secs(10)).await;
+    time::resume();
+
+    let pull_response = inbound.next().await.unwrap().unwrap();
+    assert_eq!(pull_response.received_messages.len(), 1);
+    assert_eq!(
+        pull_response
+            .received_messages
+            .get(0)
+            .unwrap()
+            .message
+            .clone()
+            .unwrap()
+            .message_id,
+        initial_message2.message.unwrap().message_id
     );
 }
 

@@ -1,16 +1,16 @@
+use crate::subscriptions::errors::*;
 use crate::subscriptions::futures::{Deleted, MessagesAvailable};
 use crate::subscriptions::subscription_actor::{
     SubscriptionActor, SubscriptionObserver, SubscriptionRequest,
 };
 use crate::subscriptions::subscription_manager::SubscriptionManagerDelegate;
 use crate::subscriptions::{
-    AckId, AcknowledgeMessagesError, DeadlineModification, DeleteError, GetStatsError,
-    ModifyDeadlineError, PostMessagesError, PullMessagesError, PulledMessage, SubscriptionName,
-    SubscriptionStats,
+    AckId, DeadlineModification, PulledMessage, SubscriptionName, SubscriptionStats,
 };
 use crate::topics::{Topic, TopicMessage};
 use std::cmp::Ordering;
 use std::sync::{Arc, Weak};
+use std::time::Duration;
 use tokio::sync::{mpsc, oneshot};
 
 /// Represents a subscription.
@@ -34,7 +34,11 @@ pub struct Subscription {
 /// Information about a subscription.
 #[derive(Debug, Clone)]
 pub struct SubscriptionInfo {
+    /// The subscription name.
     pub name: SubscriptionName,
+
+    /// The ACK deadline duration (if not specified in pull call).
+    pub ack_deadline: Duration,
 }
 
 impl Subscription {
@@ -71,6 +75,18 @@ impl Subscription {
     /// Returns a signal for when the subscription gets deleted.
     pub fn deleted(&self) -> Deleted {
         self.observer.deleted()
+    }
+
+    /// Returns the info for the subscription.
+    pub async fn get_info(&self) -> Result<SubscriptionInfo, GetInfoError> {
+        let (responder, recv) = oneshot::channel();
+        self.sender
+            .send(SubscriptionRequest::GetInfo {
+                responder,
+            })
+            .await
+            .map_err(|_| GetInfoError::Closed)?;
+        recv.await.map_err(|_| GetInfoError::Closed)?
     }
 
     /// Pulls messages from the subscription.
@@ -178,7 +194,15 @@ impl Ord for Subscription {
 
 impl SubscriptionInfo {
     /// Creates a new `SubscriptionInfo`.
-    pub fn new(name: SubscriptionName) -> Self {
-        Self { name }
+    pub fn new(name: SubscriptionName, ack_deadline: Duration) -> Self {
+        Self { name, ack_deadline }
+    }
+
+    /// Creates a new `SubscriptionInfo` with default values.
+    pub fn new_with_defaults(name: SubscriptionName) -> Self {
+        Self {
+            name,
+            ack_deadline: Duration::from_secs(10),
+        }
     }
 }

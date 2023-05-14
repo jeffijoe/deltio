@@ -137,7 +137,7 @@ async fn new_topic_and_subscription(
 
     let subscription = subscription_manager
         .create_subscription(
-            SubscriptionName::new(&project_id, &sub_id),
+            SubscriptionInfo::new_with_defaults(SubscriptionName::new(&project_id, &sub_id)),
             Arc::clone(&topic),
         )
         .await
