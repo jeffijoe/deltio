@@ -23,18 +23,18 @@ async fn test_subscription_management() {
 
     // Create a subscription
     let subscription_name = SubscriptionName::new("test", "subscribing");
+    let mut resource = map_to_subscription_resource(&subscription_name, &topic_name);
+    resource.ack_deadline_seconds = 20;
     let subscription = server
         .subscriber
-        .create_subscription(map_to_subscription_resource(
-            &subscription_name,
-            &topic_name,
-        ))
+        .create_subscription(resource)
         .await
         .unwrap();
 
     let subscription = subscription.get_ref();
     assert_eq!(subscription.topic, topic_name.to_string());
     assert_eq!(subscription.name, subscription_name.to_string());
+    assert_eq!(subscription.ack_deadline_seconds, 20);
 
     // Verify that we can retrieve it.
     let subscription = server
@@ -47,6 +47,7 @@ async fn test_subscription_management() {
     let subscription = subscription.get_ref();
     assert_eq!(subscription.topic, topic_name.to_string());
     assert_eq!(subscription.name, subscription_name.to_string());
+    assert_eq!(subscription.ack_deadline_seconds, 20);
 
     server.dispose().await;
 }
