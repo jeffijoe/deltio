@@ -1,8 +1,8 @@
 use crate::subscriptions::{AckDeadline, AckId, DeadlineModification, PulledMessage};
 use std::collections::hash_map::Entry;
 use std::collections::{BTreeSet, HashMap};
-use std::time::Instant;
 use tokio::sync::Notify;
+use tokio::time::Instant;
 
 /// Keeps track of pulled messages and their deadlines.
 pub(crate) struct OutstandingMessageTracker {
@@ -150,7 +150,7 @@ impl OutstandingMessageTracker {
                     {
                         should_notify = true;
                     }
-                    println!("Extending dawg, should: {}", &should_notify);
+
                     self.expirations.insert(expiration_key);
                 } else {
                     // The message is being NACK'ed, remove the entry from the tracker.
@@ -180,7 +180,7 @@ impl OutstandingMessageTracker {
     }
 
     /// Polls for the next batch of expired messages.
-    pub async fn next_expired(&mut self) -> Option<Vec<PulledMessage>> {
+    pub async fn poll_next_expired(&mut self) -> Option<Vec<PulledMessage>> {
         loop {
             let now = Instant::now();
             let taken = self.take_expired(&now);
@@ -193,7 +193,7 @@ impl OutstandingMessageTracker {
                 let when = next_expiration.time();
                 tokio::select! {
                     _ = notified => {},
-                    _ = tokio::time::sleep_until(when.into()) => {}
+                    _ = tokio::time::sleep_until(when) => {}
                 }
             } else {
                 notified.await;
@@ -257,7 +257,7 @@ mod tests {
     }
 
     #[test]
-    fn remove_iter() {
+    fn remove() {
         let mut tracker = OutstandingMessageTracker::new();
         tracker.add(new_pulled_message(3, 1)); // #1
         tracker.add(new_pulled_message(4, 2)); // #2
@@ -270,6 +270,68 @@ mod tests {
         // Verify the last one left is the one representing #4.
         assert_eq!(tracker.len(), 1);
         assert_eq!(tracker.next_expiration().unwrap(), deadline_for(3));
+    }
+
+    #[test]
+    fn modify_changes_next_expiration() {
+        let mut tracker = OutstandingMessageTracker::new();
+
+        // These all expire at the same time.
+        tracker.add(new_pulled_message(1, 3));
+        tracker.add(new_pulled_message(2, 3));
+        tracker.add(new_pulled_message(3, 3));
+        tracker.add(new_pulled_message(4, 3));
+
+        // Change the expiration of #1 to be earlier.
+        tracker.modify(vec![DeadlineModification::new(
+            AckId::new(1),
+            deadline_for(2),
+        )]);
+        assert_eq!(tracker.next_expiration().unwrap(), deadline_for(2));
+
+        // Change the expiration of #1 to be later; the previous expiration of '3' should
+        // be restored as the "next expiration".
+        tracker.modify(vec![DeadlineModification::new(
+            AckId::new(1),
+            deadline_for(4),
+        )]);
+        assert_eq!(tracker.next_expiration().unwrap(), deadline_for(3));
+    }
+
+    #[test]
+    fn modify_noop_on_unknown_ack_id() {
+        let mut tracker = OutstandingMessageTracker::new();
+
+        assert!(tracker.next_expiration().is_none());
+
+        // Should not do anything.
+        tracker.modify(vec![DeadlineModification::new(
+            AckId::new(1),
+            deadline_for(2),
+        )]);
+        assert!(tracker.next_expiration().is_none());
+    }
+
+    #[test]
+    fn modify_nacks() {
+        let mut tracker = OutstandingMessageTracker::new();
+
+        // These all expire at the same time.
+        tracker.add(new_pulled_message(1, 3));
+        tracker.add(new_pulled_message(2, 3));
+        tracker.add(new_pulled_message(3, 3));
+        tracker.add(new_pulled_message(4, 3));
+
+        // Nack #1
+        tracker.modify(vec![DeadlineModification::nack(AckId::new(1))]);
+
+        // Taking all expired messages should not include #1
+        let expired = tracker.take_expired(&deadline_for(3).time());
+        assert_eq!(expired.len(), 3);
+        assert_eq!(
+            expired.into_iter().map(|e| e.ack_id()).collect::<Vec<_>>(),
+            vec![AckId::new(2), AckId::new(3), AckId::new(4)]
+        );
     }
 
     /// Helper for creating a pulled message.

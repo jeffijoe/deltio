@@ -2,7 +2,8 @@ use crate::subscriptions::AckId;
 use crate::topics::TopicMessage;
 use lazy_static::lazy_static;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+use tokio::time::Instant;
 
 /// A message that has been pulled.
 #[derive(Debug, Clone)]

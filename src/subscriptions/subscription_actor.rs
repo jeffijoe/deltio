@@ -12,8 +12,8 @@ use futures::future::Shared;
 use futures::FutureExt;
 use parking_lot::Mutex;
 use std::sync::{Arc, Weak};
-use std::time::Instant;
 use tokio::sync::{mpsc, oneshot, Notify};
+use tokio::time::Instant;
 
 /// The max amount of messages that can be pulled.
 const MAX_PULL_COUNT: u16 = 1_000;
@@ -103,7 +103,7 @@ impl SubscriptionActor {
                         Some(request) = receiver.recv() => {
                             actor.receive(request).await
                         },
-                        Some(expired) = actor.outstanding.next_expired() => {
+                        Some(expired) = actor.outstanding.poll_next_expired() => {
                             actor.handle_expired_messages(expired);
                         }
                     }

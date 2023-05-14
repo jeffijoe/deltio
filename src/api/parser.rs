@@ -4,7 +4,8 @@ use crate::subscriptions::{
     AckDeadline, AckId, AckIdParseError, DeadlineModification, SubscriptionName,
 };
 use crate::topics::TopicName;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+use tokio::time::Instant;
 use tonic::Status;
 
 /// Parses the topic name.

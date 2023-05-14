@@ -21,6 +21,7 @@ use futures::Stream;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
+use tokio::time::Instant;
 use tokio_stream::StreamExt;
 use tonic::{Request, Response, Status, Streaming};
 
@@ -191,7 +192,7 @@ impl Subscriber for SubscriberService {
         request: Request<ModifyAckDeadlineRequest>,
     ) -> Result<Response<()>, Status> {
         let request = request.get_ref();
-        let now = std::time::Instant::now();
+        let now = Instant::now();
         let deadline_modifications = parser::parse_deadline_modifications(
             now,
             &request.ack_ids,
@@ -487,7 +488,7 @@ async fn handle_streaming_pull_request(
 
     // Extend deadlines if requested to do so.
     if !request.modify_deadline_ack_ids.is_empty() {
-        let now = std::time::Instant::now();
+        let now = Instant::now();
         let deadline_modifications = parser::parse_deadline_modifications(
             now,
             &request.modify_deadline_ack_ids,

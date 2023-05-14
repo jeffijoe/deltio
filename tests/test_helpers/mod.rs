@@ -2,7 +2,8 @@ use deltio::make_server_builder;
 use deltio::pubsub_proto::publisher_client::PublisherClient;
 use deltio::pubsub_proto::subscriber_client::SubscriberClient;
 use deltio::pubsub_proto::{
-    PublishRequest, PubsubMessage, StreamingPullRequest, StreamingPullResponse, Subscription, Topic,
+    AcknowledgeRequest, ModifyAckDeadlineRequest, PublishRequest, PubsubMessage,
+    StreamingPullRequest, StreamingPullResponse, Subscription, Topic,
 };
 use deltio::subscriptions::SubscriptionName;
 use deltio::topics::TopicName;
@@ -183,6 +184,36 @@ impl TestHost {
 
         let inbound = response.into_inner();
         (send_request, inbound)
+    }
+
+    /// ACKs the given ack IDs using an RPC call.
+    /// Used when we need an acknowledgment (no pun intended) of the ack.
+    pub async fn ack(&mut self, subscription_name: &SubscriptionName, ack_ids: Vec<String>) {
+        self.subscriber
+            .acknowledge(AcknowledgeRequest {
+                ack_ids,
+                subscription: subscription_name.to_string(),
+            })
+            .await
+            .unwrap();
+    }
+
+    /// Extend the deadline of the given ACK ids.
+    /// Used when we need an acknowledgment (no pun intended) of the deadline extensions.
+    pub async fn modify_deadlines(
+        &mut self,
+        subscription_name: &SubscriptionName,
+        seconds: i32,
+        ack_ids: Vec<String>,
+    ) {
+        self.subscriber
+            .modify_ack_deadline(ModifyAckDeadlineRequest {
+                ack_ids,
+                ack_deadline_seconds: seconds,
+                subscription: subscription_name.to_string(),
+            })
+            .await
+            .unwrap();
     }
 }
 

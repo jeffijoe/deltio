@@ -244,6 +244,9 @@ async fn test_streaming_pull() {
 
 #[tokio::test]
 async fn test_streaming_pull_deadline_extension() {
+    // Pause time since we will be advancing it ourselves.
+    time::pause();
+
     let mut server = TestHost::start().await.unwrap();
 
     // Create a topic to subscribe to.
@@ -273,21 +276,13 @@ async fn test_streaming_pull_deadline_extension() {
     // Extend the deadline 30 seconds for the 2nd message.
     // That way, we can assert that the 1st message expires and is redelivered,
     // and since the 2nd message won't be, that means the extension worked.
-    sender
-        .send(streaming_modify_ack_deadline(
-            vec![initial_message2.ack_id],
-            30,
-        ))
-        .await
-        .unwrap();
-
-    println!("we out here");
+    server
+        .modify_deadlines(&subscription_name, 30, vec![initial_message2.ack_id])
+        .await;
 
     // Advance 20 seconds and check that the first message is redelivered due
     // to not having been extended.
-    time::pause();
     time::advance(Duration::from_secs(20)).await;
-    time::resume();
 
     let pull_response = inbound.next().await.unwrap().unwrap();
     assert_eq!(pull_response.received_messages.len(), 1);
@@ -304,9 +299,7 @@ async fn test_streaming_pull_deadline_extension() {
         .unwrap();
 
     // Advance the remaining ~10 to receive the 2nd one again.
-    time::pause();
     time::advance(Duration::from_secs(10)).await;
-    time::resume();
 
     let pull_response = inbound.next().await.unwrap().unwrap();
     assert_eq!(pull_response.received_messages.len(), 1);
