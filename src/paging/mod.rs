@@ -10,7 +10,15 @@ pub struct Paging {
 impl Paging {
     /// Creates a new `Paging`.
     pub fn new(size: usize, offset: Option<usize>) -> Self {
-        Self { size, offset }
+        Self {
+            offset,
+            // Ensure that passing 0 as a page size results in a default.
+            size: match size {
+                0 => 20,
+                v if v > 1_000 => 1_000,
+                _ => size,
+            },
+        }
     }
 
     /// Creates a new `Paging` with no offset.
