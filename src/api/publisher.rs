@@ -61,7 +61,7 @@ impl Publisher for PublisherService {
             message_storage_policy: None,
         };
 
-        println!(
+        log::info!(
             "{}: creating topic took {:?}",
             topic_name_str,
             start.elapsed()
@@ -95,7 +95,7 @@ impl Publisher for PublisherService {
             let message = TopicMessage::new(data);
             messages.push(message);
         }
-        println!("{}: publishing {} messages", &topic_name, messages.len());
+        log::info!("{}: publishing {} messages", &topic_name, messages.len());
 
         let result = topic
             .publish_messages(messages)
@@ -109,7 +109,7 @@ impl Publisher for PublisherService {
             message_ids: result.message_ids.iter().map(|m| m.to_string()).collect(),
         });
 
-        println!("{}: publishing took {:?}", &topic_name, start.elapsed());
+        log::info!("{}: publishing took {:?}", &topic_name, start.elapsed());
 
         Ok(response)
     }
@@ -217,7 +217,7 @@ impl Publisher for PublisherService {
         let request = request.get_ref();
 
         let topic_name = parser::parse_topic_name(&request.topic)?;
-        println!("{}: deleting topic", &topic_name);
+        log::info!("{}: deleting topic", &topic_name);
 
         let topic = self.get_topic_internal(&topic_name).await?;
 

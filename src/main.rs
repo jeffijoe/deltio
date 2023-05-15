@@ -1,25 +1,30 @@
+use clap::Parser;
 use deltio::make_server_builder;
+use log::LevelFilter;
 use std::net::SocketAddr;
+
+#[derive(Parser)]
+#[command(version, about)]
+struct Cli {
+    /// The hostname + port to listen on.
+    #[arg(short, long, value_name = "ADDR", default_value = "0.0.0.0:8085")]
+    bind: SocketAddr,
+}
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    env_logger::init();
-    let args = std::env::args().collect::<Vec<String>>();
-    let port = args
-        .get(1)
-        .expect("Expected first argument to be a port number");
-    let addr: SocketAddr = format!("0.0.0.0:{}", port).parse()?;
-    println!("Deltio listening on {}", &addr);
+    env_logger::builder()
+        .format_target(false)
+        .filter_level(LevelFilter::Info)
+        .init();
+    let args = Cli::parse();
+    log::info!("Deltio started, listening on {}", &args.bind);
 
-    let serve_fut = make_server_builder().serve(addr);
+    let serve_fut = make_server_builder().serve(args.bind);
     let join_handle = tokio::spawn(serve_fut);
     let _ = tokio::join!(join_handle);
-    // tokio::select! {
-    //     r = join_handle => r??,
-    //     _ = tokio::time::sleep(std::time::Duration::from_secs(20)) => {}
-    // }
 
-    println!("Deltio exiting");
+    log::info!("Deltio stopped");
 
     Ok(())
 }

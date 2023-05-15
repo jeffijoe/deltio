@@ -1,5 +1,4 @@
 use bytes::Bytes;
-use deltio::subscriptions::futures::MessagesAvailable;
 use deltio::subscriptions::subscription_manager::SubscriptionManager;
 use deltio::subscriptions::*;
 use deltio::topics::topic_manager::TopicManager;
@@ -27,7 +26,7 @@ async fn pulling_messages() {
         .unwrap();
 
     // Wait for the notification.
-    wait_for_notification(notified).await;
+    wait(notified).await;
 
     // Pull messages.
     let pulled_messages = subscription.pull_messages(10).await.unwrap();
@@ -80,7 +79,7 @@ async fn nack_messages() {
         .unwrap();
 
     // Wait for the notification.
-    wait_for_notification(notified).await;
+    wait(notified).await;
 
     // Pull messages.
     let pulled_messages = subscription.pull_messages(10).await.unwrap();
@@ -102,7 +101,7 @@ async fn nack_messages() {
         .unwrap();
 
     // Verify that nack'ing triggers the notification.
-    wait_for_notification(notified).await;
+    wait(notified).await;
 
     // Verify that after NACK'ing the message is not considered outstanding (as it was
     // returned to the backlog).
@@ -176,19 +175,14 @@ async fn test_delete_subscription() {
         messages_notified.await;
     };
 
-    tokio::select! {
-        _ = joined => {},
-        _ = tokio::time::sleep(std::time::Duration::from_secs(1)) => {
-            panic!("Timed out waiting for notifications")
-        }
-    }
+    wait(joined).await;
 }
 
-async fn wait_for_notification(notified: MessagesAvailable<'_>) {
+async fn wait(notified: impl std::future::Future<Output = ()>) {
     tokio::select! {
         _ = notified => {},
         _ = tokio::time::sleep(tokio::time::Duration::from_secs(5)) => {
-            panic!("Timed out waiting for notify")
+            panic!("Timed out waiting for future")
         }
     }
 }

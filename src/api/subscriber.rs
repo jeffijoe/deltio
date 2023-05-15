@@ -89,7 +89,7 @@ impl Subscriber for SubscriberService {
         let subscription_info = subscription.get_info().await.map_err(|e| match e {
             GetInfoError::Closed => conflict(),
         })?;
-        println!(
+        log::info!(
             "{}: creating subscription took {:?}",
             subscription_name.clone(),
             start.elapsed()
@@ -179,7 +179,7 @@ impl Subscriber for SubscriberService {
         let subscription_name = parser::parse_subscription_name(&request.subscription)?;
         let subscription = get_subscription(&self.subscription_manager, &subscription_name)?;
 
-        println!("{}: deleting subscription", &subscription_name);
+        log::info!("{}: deleting subscription", &subscription_name);
         subscription.delete().await.map_err(|e| match e {
             DeleteError::Closed => conflict(),
         })?;
@@ -237,7 +237,7 @@ impl Subscriber for SubscriberService {
                 AcknowledgeMessagesError::Closed => Status::internal("System is shutting down"),
             })?;
 
-        println!(
+        log::info!(
             "{}: ack {} messages (took {:?})",
             &subscription_name,
             &ack_ids.len(),
@@ -252,27 +252,47 @@ impl Subscriber for SubscriberService {
         let subscription_name = parser::parse_subscription_name(&request.subscription)?;
         let subscription = get_subscription(&self.subscription_manager, &subscription_name)?;
 
-        // Then, pull the available messages from the subscription.
-        let pulled = subscription
-            .pull_messages(request.max_messages as u16)
-            .await
-            .map_err(|e| match e {
-                PullMessagesError::Closed => conflict(),
-            })?;
+        // Pull the available messages from the subscription.
+        let messages_fut = async {
+            loop {
+                let signal = subscription.messages_available();
+                let received_messages =
+                    pull_messages(&subscription, request.max_messages as u16).await?;
+                // If we got messages, return them.
+                if !received_messages.is_empty() {
+                    log::info!(
+                        "{}: pulled {} messages",
+                        &subscription_name,
+                        received_messages.len()
+                    );
+                    return Ok(Response::new(PullResponse { received_messages }));
+                }
 
-        // Map them to the protocol format.
-        let received_messages = pulled
-            .iter()
-            .map(map_to_received_message)
-            .collect::<Vec<_>>();
+                // If we didn't, and we are supposed to return immediately, do so.
+                // The `return_immediately` property is deprecated in the proto, but we have to
+                // support it.
+                #[allow(deprecated)]
+                if request.return_immediately {
+                    return Ok(Response::new(PullResponse { received_messages }));
+                }
 
-        println!(
-            "{}: pulled {} messages",
-            &subscription_name,
-            received_messages.len()
-        );
+                // Otherwise, wait for messages to be available.
+                signal.await;
+            }
+        };
 
-        Ok(Response::new(PullResponse { received_messages }))
+        // We only want to wait for a bounded amount of time.
+        let timeout_fut = async {
+            tokio::time::sleep(Duration::from_secs(5 * 60)).await;
+            Ok::<Response<_>, Status>(Response::new(PullResponse {
+                received_messages: Vec::default(),
+            }))
+        };
+
+        tokio::select! {
+            response = messages_fut => response,
+            response = timeout_fut => response
+        }
     }
 
     type StreamingPullStream =
@@ -292,7 +312,7 @@ impl Subscriber for SubscriberService {
         let subscription_name = parser::parse_subscription_name(&request.subscription)?;
         let subscription = get_subscription(&self.subscription_manager, &subscription_name)?;
 
-        println!(
+        log::info!(
             "{}: starting streaming pull took {:?}",
             subscription_name,
             start.elapsed()
@@ -331,7 +351,7 @@ impl Subscriber for SubscriberService {
 
                     // If we received any messages, yield them back.
                     if !received_messages.is_empty() {
-                        println!(
+                        log::info!(
                             "{}: streaming-pulled {} messages",
                             &subscription_name,
                             received_messages.len()
@@ -437,6 +457,26 @@ impl Subscriber for SubscriberService {
     async fn seek(&self, _request: Request<SeekRequest>) -> Result<Response<SeekResponse>, Status> {
         Err(Status::unimplemented("Seek is not implemented in Deltio"))
     }
+}
+
+/// Helper for pulling messages from the subscription.
+async fn pull_messages(
+    subscription: &crate::subscriptions::Subscription,
+    max_messages: u16,
+) -> Result<Vec<ReceivedMessage>, Status> {
+    let pulled = subscription
+        .pull_messages(max_messages)
+        .await
+        .map_err(|e| match e {
+            PullMessagesError::Closed => conflict(),
+        })?;
+
+    // Map them to the protocol format.
+    let received = pulled
+        .iter()
+        .map(map_to_received_message)
+        .collect::<Vec<_>>();
+    Ok(received)
 }
 
 /// Handles the control message for a streaming pull request.
