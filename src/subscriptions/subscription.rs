@@ -81,9 +81,7 @@ impl Subscription {
     pub async fn get_info(&self) -> Result<SubscriptionInfo, GetInfoError> {
         let (responder, recv) = oneshot::channel();
         self.sender
-            .send(SubscriptionRequest::GetInfo {
-                responder,
-            })
+            .send(SubscriptionRequest::GetInfo { responder })
             .await
             .map_err(|_| GetInfoError::Closed)?;
         recv.await.map_err(|_| GetInfoError::Closed)?

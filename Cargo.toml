@@ -34,4 +34,10 @@ rand = "0.8.5"
 tonic-build = { version = "0.9.1" }
 
 [profile.release]
-debug = true
+opt-level = 3
+debug = false
+debug-assertions = false
+lto = true
+rpath = false
+codegen-units = 1
+incremental = true

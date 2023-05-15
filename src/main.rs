@@ -16,13 +16,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     env_logger::builder()
         .format_target(false)
         .filter_level(LevelFilter::Info)
+        .parse_default_env()
         .init();
     let args = Cli::parse();
-    log::info!("Deltio started, listening on {}", &args.bind);
+    log::info!("Deltio starting, listening on {}", &args.bind);
 
-    let serve_fut = make_server_builder().serve(args.bind);
-    let join_handle = tokio::spawn(serve_fut);
-    let _ = tokio::join!(join_handle);
+    make_server_builder().serve(args.bind).await?;
 
     log::info!("Deltio stopped");
 

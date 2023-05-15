@@ -1,0 +1,52 @@
+name: CI
+
+on: [ push, pull_request ]
+
+jobs:
+  build:
+    name: "Build & Lint"
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ "windows-latest", "macos-latest", "ubuntu-latest" ]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+        
+      - name: Install Protoc
+        uses: arduino/setup-protoc@v1
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Rust
+        run: |
+          rustup toolchain install stable --profile minimal --no-self-update
+          rustup default stable
+
+      - name: Rust Cache  
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build
+        run: cargo build --release
+
+      - name: Check
+        # Only run on Ubuntu
+        if: ${{ matrix.os == 'ubuntu-latest' }}
+        run: cargo check
+
+      - name: Clippy
+        # Only run on Ubuntu
+        if: ${{ matrix.os == 'ubuntu-latest' }}
+        run: cargo clippy
+
+      - name: Style
+        if: ${{ matrix.os == 'ubuntu-latest' }}
+        run: cargo fmt --all -- --check
+          
+      - name: Test
+        if: ${{ matrix.os == 'ubuntu-latest' }}
+        run: cargo test      
+
+concurrency:
+  cancel-in-progress: true
+  group: ci-${{ github.ref }}

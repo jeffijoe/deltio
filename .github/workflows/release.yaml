@@ -1,0 +1,212 @@
+name: Release
+
+permissions:
+  packages: write
+  contents: write
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*'
+
+jobs:
+  tag:
+    name: "Compute Release Tag"
+    runs-on: ubuntu-latest
+    # If this is a GitHub release, use the tag name as it represents
+    # a release version, such as `v0.1.2`. The output would be `0.1.2`.
+    # For non-releases, use `edge`.
+    outputs:
+      tag: ${{ steps.compute.outputs.tag }}
+      docker_tags: ${{ steps.compute.outputs.docker_tags }}
+    steps:
+      - name: "Compute Release Tag"
+        id: compute
+        run: |
+          TAG="edge"
+          DOCKER_BASE="ghcr.io/jeffijoe/deltio"
+          DOCKER_TAGS="$DOCKER_BASE:edge"
+          if [[ "$GITHUB_REF" == "refs/tags/v"* ]]; then
+            TAG="${GITHUB_REF_NAME:1}"
+            set +e
+            read -r -d '' DOCKER_TAGS <<-EOF
+          $DOCKER_BASE:latest
+          $DOCKER_BASE:$TAG
+          EOF
+          set -e
+          fi
+          echo "Tag: $TAG"
+          echo "Docker tags: $DOCKER_TAGS"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "docker_tags<<EOF" >> "$GITHUB_OUTPUT"
+          echo "$DOCKER_TAGS" >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+
+  docker:
+    needs: tag
+    name: "Build Docker Images"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v2
+
+      - name: Setup Docker BuildX
+        uses: docker/setup-buildx-action@v2
+
+      - name: Cache Docker Layers
+        uses: actions/cache@v3
+        with:
+          path: /tmp/.buildx-cache
+          key: ${{ runner.os }}-buildx-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-buildx-
+
+      - name: Login - GitHub Container Registry
+        uses: docker/login-action@v2
+        with:
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+          registry: ghcr.io
+
+      - name: Build & Push
+        uses: docker/build-push-action@v4
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/386,linux/amd64,linux/arm64
+          push: true
+          tags: ${{ needs.tag.outputs.docker_tags }}
+
+  binary:
+    needs: tag
+    name: "Build Native"
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Linux
+          - target: arm-unknown-linux-gnueabihf
+            os: ubuntu-latest
+            artifact_name: deltio
+            asset_name: deltio-${{ needs.tag.outputs.tag }}-linux-arm
+            install_linker: gcc-arm-linux-gnueabihf
+            
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+            artifact_name: deltio
+            asset_name: deltio-${{ needs.tag.outputs.tag }}-linux-aarch64
+            install_linker: gcc-aarch64-linux-gnu
+
+          - target: armv7-unknown-linux-gnueabihf
+            os: ubuntu-latest
+            artifact_name: deltio
+            asset_name: deltio-${{ needs.tag.outputs.tag }}-linux-armv7
+            install_linker: gcc-arm-linux-gnueabihf
+
+          - target: i686-unknown-linux-gnu
+            os: ubuntu-latest
+            artifact_name: deltio
+            asset_name: deltio-${{ needs.tag.outputs.tag }}-linux-x86
+            install_linker: gcc-multilib
+
+          - target: i686-unknown-linux-musl
+            os: ubuntu-latest
+            artifact_name: deltio
+            asset_name: deltio-${{ needs.tag.outputs.tag }}-linux-musl-x86
+
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            artifact_name: deltio
+            asset_name: deltio-${{ needs.tag.outputs.tag }}-linux-x86_64
+
+          - target: x86_64-unknown-linux-musl
+            os: ubuntu-latest
+            artifact_name: deltio
+            asset_name: deltio-${{ needs.tag.outputs.tag }}-linux-musl-x86_64
+
+          # macOS
+          - target: x86_64-apple-darwin
+            os: macos-latest
+            artifact_name: deltio
+            asset_name: deltio-${{ needs.tag.outputs.tag }}-macos-x86_64
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            artifact_name: deltio
+            asset_name: deltio-${{ needs.tag.outputs.tag }}-macos-aarch64
+
+          # Windows
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            artifact_name: deltio.exe
+            asset_name: deltio-${{ needs.tag.outputs.tag }}-windows-x86_64
+          - target: aarch64-pc-windows-msvc
+            os: windows-latest
+            artifact_name: deltio.exe
+            asset_name: deltio-${{ needs.tag.outputs.tag }}-windows-aarch64
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Setup Rust
+        run: |
+          rustup toolchain install stable --profile minimal --no-self-update
+          rustup target add ${{ matrix.target }}
+          rustup default stable
+
+      - name: Install Cross-Platform Linker
+        if: ${{ matrix.install_linker }}
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ${{ matrix.install_linker }}
+
+      - name: Install Protoc
+        uses: arduino/setup-protoc@v1
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build
+        run: |
+          cargo build --verbose --release --target=${{ matrix.target }} 
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: ${{ matrix.asset_name }}
+          path: ./target/${{ matrix.target }}/release/${{ matrix.artifact_name }}
+
+      - name: Archive Release
+        shell: bash
+        id: archive
+        run: |
+          # Compress to zip or tar.gz based on the OS.
+          DEST="";
+          if [ "${{ matrix.os }}" = "windows-latest" ]; then
+            DEST="${{ matrix.asset_name }}.zip";
+            7z a -tzip "$DEST" .\\target\\${{ matrix.target }}\\release\\${{ matrix.artifact_name }} .\\LICENSE.md;  
+          else
+            DEST="${{ matrix.asset_name }}.tar.gz";
+            tar -czvf "$DEST" ./target/${{ matrix.target }}/release/${{ matrix.artifact_name }} ./LICENSE.md;
+          fi;
+          echo "file=$DEST" >> $GITHUB_OUTPUT;
+
+      - name: Upload Release
+        uses: softprops/action-gh-release@v1
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: ${{ steps.archive.outputs.file }}
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+concurrency:
+  cancel-in-progress: true
+  group: release-${{ github.ref }}

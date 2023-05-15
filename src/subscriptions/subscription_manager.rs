@@ -148,12 +148,7 @@ impl State {
         if let Entry::Vacant(entry) = self.subscriptions.entry(info.name.clone()) {
             self.next_id += 1;
             let internal_id = self.next_id;
-            let subscription = Arc::new(Subscription::new(
-                info,
-                internal_id,
-                topic,
-                delegate,
-            ));
+            let subscription = Arc::new(Subscription::new(info, internal_id, topic, delegate));
             entry.insert(subscription.clone());
             return Ok(subscription);
         }
