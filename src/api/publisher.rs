@@ -39,7 +39,7 @@ impl PublisherService {
 #[async_trait::async_trait]
 impl Publisher for PublisherService {
     async fn create_topic(&self, request: Request<Topic>) -> Result<Response<Topic>, Status> {
-        let start = std::time::SystemTime::now();
+        let start = std::time::Instant::now();
         let request = request.get_ref();
         let topic_name = parser::parse_topic_name(&request.name)?;
         let topic_name_str = topic_name.to_string();
@@ -82,7 +82,7 @@ impl Publisher for PublisherService {
         &self,
         request: Request<PublishRequest>,
     ) -> Result<Response<PublishResponse>, Status> {
-        let start = std::time::SystemTime::now();
+        let start = std::time::Instant::now();
         let request = request.get_ref();
         let topic_name = parser::parse_topic_name(&request.topic)?;
 
@@ -95,7 +95,6 @@ impl Publisher for PublisherService {
             let message = TopicMessage::new(data);
             messages.push(message);
         }
-        log::info!("{}: publishing {} messages", &topic_name, messages.len());
 
         let result = topic
             .publish_messages(messages)
@@ -109,7 +108,12 @@ impl Publisher for PublisherService {
             message_ids: result.message_ids.iter().map(|m| m.to_string()).collect(),
         });
 
-        log::info!("{}: publishing took {:?}", &topic_name, start.elapsed());
+        log::info!(
+            "{}: publishing {} messages took {:?}",
+            &topic_name,
+            request.messages.len(),
+            start.elapsed()
+        );
 
         Ok(response)
     }
@@ -118,11 +122,13 @@ impl Publisher for PublisherService {
         &self,
         request: Request<GetTopicRequest>,
     ) -> Result<Response<Topic>, Status> {
+        let start = std::time::Instant::now();
         let request = request.get_ref();
         let topic_name = parser::parse_topic_name(&request.topic)?;
 
         let topic = self.get_topic_internal(&topic_name).await?;
 
+        log::info!("{}: getting topic took {:?}", &topic_name, start.elapsed());
         Ok(Response::new(Topic {
             name: topic.name.to_string(),
             labels: Default::default(),
@@ -138,6 +144,7 @@ impl Publisher for PublisherService {
         &self,
         request: Request<ListTopicsRequest>,
     ) -> Result<Response<ListTopicsResponse>, Status> {
+        let start = std::time::Instant::now();
         let request = request.get_ref();
         let paging = parser::parse_paging(request.page_size, &request.page_token)?;
 
@@ -167,6 +174,13 @@ impl Publisher for PublisherService {
             topics,
             next_page_token: page_token.unwrap_or(String::default()),
         };
+
+        log::info!(
+            "{}: listing {} topics took {:?}",
+            &request.project,
+            response.topics.len(),
+            start.elapsed()
+        );
         Ok(Response::new(response))
     }
 
@@ -174,6 +188,7 @@ impl Publisher for PublisherService {
         &self,
         request: Request<ListTopicSubscriptionsRequest>,
     ) -> Result<Response<ListTopicSubscriptionsResponse>, Status> {
+        let start = std::time::Instant::now();
         let request = request.get_ref();
         let topic_name = parser::parse_topic_name(&request.topic)?;
 
@@ -188,6 +203,12 @@ impl Publisher for PublisherService {
                 ListSubscriptionsError::Closed => conflict(),
             })?;
 
+        log::info!(
+            "{}: listing {} subscriptions took {:?}",
+            &topic_name,
+            page.subscriptions.len(),
+            start.elapsed()
+        );
         Ok(Response::new(ListTopicSubscriptionsResponse {
             subscriptions: page
                 .subscriptions
@@ -214,17 +235,17 @@ impl Publisher for PublisherService {
         &self,
         request: Request<DeleteTopicRequest>,
     ) -> Result<Response<()>, Status> {
+        let start = std::time::Instant::now();
         let request = request.get_ref();
 
         let topic_name = parser::parse_topic_name(&request.topic)?;
-        log::info!("{}: deleting topic", &topic_name);
-
         let topic = self.get_topic_internal(&topic_name).await?;
 
         topic.delete().await.map_err(|e| match e {
             DeleteError::Closed => conflict(),
         })?;
 
+        log::info!("{}: deleting topic took {:?}", &topic_name, start.elapsed());
         Ok(Response::new(()))
     }
 
