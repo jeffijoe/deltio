@@ -110,7 +110,7 @@ async fn test_list() {
     let list_response = server
         .subscriber
         .list_subscriptions(ListSubscriptionsRequest {
-            project: "test".to_string(),
+            project: "projects/test".to_string(),
             page_size: 1,
             page_token: "".to_string(),
         })
@@ -133,7 +133,7 @@ async fn test_list() {
     let list_response = server
         .subscriber
         .list_subscriptions(ListSubscriptionsRequest {
-            project: "test".to_string(),
+            project: "projects/test".to_string(),
             page_size: 1,
             page_token: list_response.next_page_token.clone(),
         })
@@ -155,7 +155,7 @@ async fn test_list() {
     let list_response = server
         .subscriber
         .list_subscriptions(ListSubscriptionsRequest {
-            project: "test".to_string(),
+            project: "projects/test".to_string(),
             page_size: 1,
             page_token: list_response.next_page_token.clone(),
         })
@@ -413,7 +413,7 @@ async fn test_deleting_subscription() {
     let response = server
         .subscriber
         .list_subscriptions(ListSubscriptionsRequest {
-            project: subscription_name.project_id().to_string(),
+            project: format!("projects/{}", subscription_name.project_id()),
             page_size: 10,
             page_token: Default::default(),
         })

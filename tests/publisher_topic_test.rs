@@ -64,7 +64,7 @@ async fn test_list() {
     let list_response = server
         .publisher
         .list_topics(ListTopicsRequest {
-            project: "test".to_string(),
+            project: "projects/test".to_string(),
             page_size: 1,
             page_token: "".to_string(),
         })
@@ -84,7 +84,7 @@ async fn test_list() {
     let list_response = server
         .publisher
         .list_topics(ListTopicsRequest {
-            project: "test".to_string(),
+            project: "projects/test".to_string(),
             page_size: 1,
             page_token: list_response.next_page_token.clone(),
         })
@@ -103,7 +103,7 @@ async fn test_list() {
     let list_response = server
         .publisher
         .list_topics(ListTopicsRequest {
-            project: "test".to_string(),
+            project: "projects/test".to_string(),
             page_size: 1,
             page_token: list_response.next_page_token.clone(),
         })

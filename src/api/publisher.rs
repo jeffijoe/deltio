@@ -147,10 +147,11 @@ impl Publisher for PublisherService {
         let start = std::time::Instant::now();
         let request = request.get_ref();
         let paging = parser::parse_paging(request.page_size, &request.page_token)?;
+        let project_id = parser::parse_project_id(&request.project)?;
 
         let page = self
             .topic_manager
-            .list_topics(Box::from(request.project.clone()), paging)
+            .list_topics(Box::from(project_id), paging)
             .map_err(|e| match e {
                 ListTopicsError::Closed => conflict(),
             })?;

@@ -90,3 +90,24 @@ pub(crate) fn parse_page_token(raw_value: &str) -> Result<Option<PageToken>, Sta
 
     Ok(Some(decoded))
 }
+
+/// Parses a project ID form the format `projects/{project_id}`.
+pub(crate) fn parse_project_id(raw_value: &str) -> Result<String, Status> {
+    return parse(raw_value)
+        .ok_or_else(|| Status::invalid_argument(format!("Invalid project name '{}'", &raw_value)));
+
+    /// The inner function that parses an option.
+    #[inline(always)]
+    fn parse(raw_value: &str) -> Option<String> {
+        const PROJECT_PREFIX: &str = "projects/";
+        const PROJECT_PREFIX_LEN: usize = PROJECT_PREFIX.len();
+        // Check that we start with the topic prefix.
+        if !raw_value.starts_with(PROJECT_PREFIX) {
+            return None;
+        }
+
+        // Extract the project ID.
+        let project_id = raw_value.get(PROJECT_PREFIX_LEN..)?;
+        Some(project_id.into())
+    }
+}

@@ -149,9 +149,10 @@ impl Subscriber for SubscriberService {
         let request = request.get_ref();
         let paging = parser::parse_paging(request.page_size, &request.page_token)?;
 
+        let project_id = parser::parse_project_id(&request.project)?;
         let page = self
             .subscription_manager
-            .list_subscriptions_in_project(Box::from(request.project.clone()), paging)
+            .list_subscriptions_in_project(Box::from(project_id), paging)
             .map_err(|e| match e {
                 ListSubscriptionsError::Closed => conflict(),
             })?;
