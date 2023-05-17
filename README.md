@@ -28,6 +28,12 @@ You can either:
 
 # Running
 
+When running outside of Docker (at least on macOS), it is recommended to increase the max open files limit to prevent the `too many open files` error.
+
+```bash
+$ ulimit -n unlimited
+```
+
 Assuming you have placed `deltio` somewhere in your `$PATH`, run Deltio with the default options (port: `8085`):
 
 ```bash
