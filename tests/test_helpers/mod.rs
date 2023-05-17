@@ -36,6 +36,8 @@ pub struct TestHost {
     /// The Subscriber client.
     pub subscriber: SubscriberClient<Channel>,
 
+    sock_file: String,
+
     /// Used for waiting for the server to terminate.
     server_join_handle: tokio::task::JoinHandle<()>,
 
@@ -77,7 +79,10 @@ impl TestHost {
         // the Unix socket.
         let channel = Endpoint::try_from("http://doesnt.matter")
             .map_err(TestHostError::ClientError)?
-            .connect_with_connector(service_fn(move |_| UnixStream::connect(sock_file.clone())))
+            .connect_with_connector(service_fn({
+                let sock_file = sock_file.clone();
+                move |_| UnixStream::connect(sock_file.clone())
+            }))
             .await
             .map_err(TestHostError::ClientError)?;
 
@@ -87,6 +92,7 @@ impl TestHost {
         Ok(Self {
             publisher,
             subscriber,
+            sock_file,
             server_join_handle,
             shutdown_send,
         })
@@ -96,6 +102,7 @@ impl TestHost {
     pub async fn dispose(self) {
         self.shutdown_send.send(()).unwrap();
         self.server_join_handle.await.unwrap();
+        let _ = tokio::fs::remove_file(self.sock_file).await;
     }
 
     /// Creates a new topic with the given name.

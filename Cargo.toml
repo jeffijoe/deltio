@@ -8,7 +8,7 @@ description = "A Google Cloud Pub/Sub emulator alternative for local testing and
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [dependencies]
 tokio-stream = { version = "0.1.12", features = ["net"] }
-tokio = { version = "1.28.0", features = ["rt", "rt-multi-thread", "net", "time", "macros", "sync", "parking_lot"] }
+tokio = { version = "1.28.0", features = ["rt", "rt-multi-thread", "net", "time", "macros", "sync", "parking_lot", "signal"] }
 async-stream = { version = "0.3.5" }
 tonic = { version = "0.9.1" }
 prost = { version = "0.11.8" }
