@@ -61,7 +61,7 @@ impl Publisher for PublisherService {
             message_storage_policy: None,
         };
 
-        log::info!(
+        log::debug!(
             "{}: creating topic took {:?}",
             topic_name_str,
             start.elapsed()
@@ -108,7 +108,7 @@ impl Publisher for PublisherService {
             message_ids: result.message_ids.iter().map(|m| m.to_string()).collect(),
         });
 
-        log::info!(
+        log::debug!(
             "{}: publishing {} messages took {:?}",
             &topic_name,
             request.messages.len(),
@@ -128,7 +128,7 @@ impl Publisher for PublisherService {
 
         let topic = self.get_topic_internal(&topic_name).await?;
 
-        log::info!("{}: getting topic took {:?}", &topic_name, start.elapsed());
+        log::debug!("{}: getting topic took {:?}", &topic_name, start.elapsed());
         Ok(Response::new(Topic {
             name: topic.name.to_string(),
             labels: Default::default(),
@@ -176,7 +176,7 @@ impl Publisher for PublisherService {
             next_page_token: page_token.unwrap_or(String::default()),
         };
 
-        log::info!(
+        log::debug!(
             "{}: listing {} topics took {:?}",
             &request.project,
             response.topics.len(),
@@ -204,7 +204,7 @@ impl Publisher for PublisherService {
                 ListSubscriptionsError::Closed => conflict(),
             })?;
 
-        log::info!(
+        log::debug!(
             "{}: listing {} subscriptions took {:?}",
             &topic_name,
             page.subscriptions.len(),
@@ -246,7 +246,7 @@ impl Publisher for PublisherService {
             DeleteError::Closed => conflict(),
         })?;
 
-        log::info!("{}: deleting topic took {:?}", &topic_name, start.elapsed());
+        log::debug!("{}: deleting topic took {:?}", &topic_name, start.elapsed());
         Ok(Response::new(()))
     }
 
