@@ -13,6 +13,10 @@ struct Cli {
     /// The log level to use.
     #[arg(short, long, value_name = "LEVEL", default_value = "info")]
     log: LogLevelArg,
+
+    /// Whether to run Deltio on a single thread instead of a worker pool of threads (one per CPU)
+    #[arg(short, long)]
+    single_thread: bool,
 }
 
 #[derive(clap::ValueEnum, Clone)]
@@ -25,11 +29,24 @@ enum LogLevelArg {
     Trace,
 }
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Parse the CLI arguments.
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Cli::parse();
+    let mut builder = if args.single_thread {
+        tokio::runtime::Builder::new_current_thread()
+    } else {
+        tokio::runtime::Builder::new_multi_thread()
+    };
 
+    builder
+        .enable_time()
+        .enable_io()
+        .thread_name("deltio worker");
+
+    let runtime = builder.build()?;
+    runtime.block_on(main_core(args))
+}
+
+async fn main_core(args: Cli) -> Result<(), Box<dyn std::error::Error>> {
     // Configure the logger.
     env_logger::builder()
         .format_target(false)
