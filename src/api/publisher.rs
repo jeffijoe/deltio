@@ -8,6 +8,7 @@ use crate::topics::{
     PublishMessagesError,
 };
 use crate::topics::{TopicMessage, TopicName};
+use crate::tracing::ActivitySpan;
 use bytes::Bytes;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -39,7 +40,7 @@ impl PublisherService {
 #[async_trait::async_trait]
 impl Publisher for PublisherService {
     async fn create_topic(&self, request: Request<Topic>) -> Result<Response<Topic>, Status> {
-        let start = std::time::Instant::now();
+        let start = ActivitySpan::start();
         let request = request.get_ref();
         let topic_name = parser::parse_topic_name(&request.name)?;
         let topic_name_str = topic_name.to_string();
@@ -61,11 +62,7 @@ impl Publisher for PublisherService {
             message_storage_policy: None,
         };
 
-        log::debug!(
-            "{}: creating topic took {:?}",
-            topic_name_str,
-            start.elapsed()
-        );
+        log::debug!("{}: creating topic {}", topic_name_str, start);
         Ok(Response::new(response))
     }
 
@@ -82,7 +79,7 @@ impl Publisher for PublisherService {
         &self,
         request: Request<PublishRequest>,
     ) -> Result<Response<PublishResponse>, Status> {
-        let start = std::time::Instant::now();
+        let start = ActivitySpan::start();
         let request = request.get_ref();
         let topic_name = parser::parse_topic_name(&request.topic)?;
 
@@ -109,10 +106,10 @@ impl Publisher for PublisherService {
         });
 
         log::debug!(
-            "{}: publishing {} messages took {:?}",
+            "{}: publishing {} messages {}",
             &topic_name,
             request.messages.len(),
-            start.elapsed()
+            start
         );
 
         Ok(response)
@@ -122,13 +119,13 @@ impl Publisher for PublisherService {
         &self,
         request: Request<GetTopicRequest>,
     ) -> Result<Response<Topic>, Status> {
-        let start = std::time::Instant::now();
+        let start = ActivitySpan::start();
         let request = request.get_ref();
         let topic_name = parser::parse_topic_name(&request.topic)?;
 
         let topic = self.get_topic_internal(&topic_name).await?;
 
-        log::debug!("{}: getting topic took {:?}", &topic_name, start.elapsed());
+        log::debug!("{}: getting topic {}", &topic_name, start);
         Ok(Response::new(Topic {
             name: topic.name.to_string(),
             labels: Default::default(),
@@ -144,7 +141,7 @@ impl Publisher for PublisherService {
         &self,
         request: Request<ListTopicsRequest>,
     ) -> Result<Response<ListTopicsResponse>, Status> {
-        let start = std::time::Instant::now();
+        let start = ActivitySpan::start();
         let request = request.get_ref();
         let paging = parser::parse_paging(request.page_size, &request.page_token)?;
         let project_id = parser::parse_project_id(&request.project)?;
@@ -177,10 +174,10 @@ impl Publisher for PublisherService {
         };
 
         log::debug!(
-            "{}: listing {} topics took {:?}",
+            "{}: listing {} topics {}",
             &request.project,
             response.topics.len(),
-            start.elapsed()
+            start
         );
         Ok(Response::new(response))
     }
@@ -189,7 +186,7 @@ impl Publisher for PublisherService {
         &self,
         request: Request<ListTopicSubscriptionsRequest>,
     ) -> Result<Response<ListTopicSubscriptionsResponse>, Status> {
-        let start = std::time::Instant::now();
+        let start = ActivitySpan::start();
         let request = request.get_ref();
         let topic_name = parser::parse_topic_name(&request.topic)?;
 
@@ -205,10 +202,10 @@ impl Publisher for PublisherService {
             })?;
 
         log::debug!(
-            "{}: listing {} subscriptions took {:?}",
+            "{}: listing {} subscriptions {}",
             &topic_name,
             page.subscriptions.len(),
-            start.elapsed()
+            start
         );
         Ok(Response::new(ListTopicSubscriptionsResponse {
             subscriptions: page
@@ -236,7 +233,7 @@ impl Publisher for PublisherService {
         &self,
         request: Request<DeleteTopicRequest>,
     ) -> Result<Response<()>, Status> {
-        let start = std::time::Instant::now();
+        let start = ActivitySpan::start();
         let request = request.get_ref();
 
         let topic_name = parser::parse_topic_name(&request.topic)?;
@@ -246,7 +243,7 @@ impl Publisher for PublisherService {
             DeleteError::Closed => conflict(),
         })?;
 
-        log::debug!("{}: deleting topic took {:?}", &topic_name, start.elapsed());
+        log::debug!("{}: deleting topic {}", &topic_name, start);
         Ok(Response::new(()))
     }
 
