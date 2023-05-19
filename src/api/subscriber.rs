@@ -17,6 +17,7 @@ use crate::subscriptions::{
 };
 use crate::topics::topic_manager::TopicManager;
 use crate::topics::GetTopicError;
+use crate::tracing::ActivitySpan;
 use futures::Stream;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -49,7 +50,7 @@ impl Subscriber for SubscriberService {
         &self,
         request: Request<Subscription>,
     ) -> Result<Response<Subscription>, Status> {
-        let start = Instant::now();
+        let start = ActivitySpan::start();
         let request = request.get_ref();
 
         let topic_name = parser::parse_topic_name(&request.topic)?;
@@ -89,10 +90,10 @@ impl Subscriber for SubscriberService {
         let subscription_info = subscription.get_info().await.map_err(|e| match e {
             GetInfoError::Closed => conflict(),
         })?;
-        log::info!(
-            "{}: creating subscription ({:?})",
+        log::debug!(
+            "{}: creating subscription {}",
             subscription_name.clone(),
-            start.elapsed()
+            start
         );
         Ok(Response::new(map_to_subscription_resource(
             &subscription,
@@ -104,7 +105,7 @@ impl Subscriber for SubscriberService {
         &self,
         request: Request<GetSubscriptionRequest>,
     ) -> Result<Response<Subscription>, Status> {
-        let start = Instant::now();
+        let start = ActivitySpan::start();
         let request = request.get_ref();
 
         let subscription_name = parser::parse_subscription_name(&request.subscription)?;
@@ -121,10 +122,10 @@ impl Subscriber for SubscriberService {
             GetInfoError::Closed => conflict(),
         })?;
 
-        log::info!(
-            "{}: getting subscription ({:?})",
+        log::debug!(
+            "{}: getting subscription {}",
             subscription_name.clone(),
-            start.elapsed()
+            start
         );
         Ok(Response::new(map_to_subscription_resource(
             &subscription,
@@ -145,7 +146,7 @@ impl Subscriber for SubscriberService {
         &self,
         request: Request<ListSubscriptionsRequest>,
     ) -> Result<Response<ListSubscriptionsResponse>, Status> {
-        let start = Instant::now();
+        let start = ActivitySpan::start();
         let request = request.get_ref();
         let paging = parser::parse_paging(request.page_size, &request.page_token)?;
 
@@ -177,11 +178,7 @@ impl Subscriber for SubscriberService {
             next_page_token: page_token.unwrap_or(String::default()),
         };
 
-        log::info!(
-            "{}: listing subscriptions ({:?})",
-            &request.project,
-            start.elapsed()
-        );
+        log::debug!("{}: listing subscriptions {}", &request.project, start);
         Ok(Response::new(response))
     }
 
@@ -189,19 +186,19 @@ impl Subscriber for SubscriberService {
         &self,
         request: Request<DeleteSubscriptionRequest>,
     ) -> Result<Response<()>, Status> {
-        let start = Instant::now();
+        let start = ActivitySpan::start();
         let request = request.get_ref();
         let subscription_name = parser::parse_subscription_name(&request.subscription)?;
         let subscription = get_subscription(&self.subscription_manager, &subscription_name)?;
 
-        log::info!("{}: deleting subscription", &subscription_name);
+        log::debug!("{}: deleting subscription", &subscription_name);
         subscription.delete().await.map_err(|e| match e {
             DeleteError::Closed => conflict(),
         })?;
-        log::info!(
-            "{}: deleting subscription ({:?})",
+        log::debug!(
+            "{}: deleting subscription {}",
             subscription_name.clone(),
-            start.elapsed()
+            start
         );
         Ok(Response::new(()))
     }
@@ -238,7 +235,7 @@ impl Subscriber for SubscriberService {
         &self,
         request: Request<AcknowledgeRequest>,
     ) -> Result<Response<()>, Status> {
-        let start = Instant::now();
+        let start = ActivitySpan::start();
         let request = request.get_ref();
         let ack_ids = request
             .ack_ids
@@ -256,11 +253,11 @@ impl Subscriber for SubscriberService {
                 AcknowledgeMessagesError::Closed => Status::internal("System is shutting down"),
             })?;
 
-        log::info!(
-            "{}: ack {} messages ({:?})",
+        log::debug!(
+            "{}: ack {} messages {}",
             &subscription_name,
             &ack_ids.len(),
-            start.elapsed()
+            start
         );
 
         Ok(Response::new(()))
@@ -279,7 +276,7 @@ impl Subscriber for SubscriberService {
                     pull_messages(&subscription, request.max_messages as u16).await?;
                 // If we got messages, return them.
                 if !received_messages.is_empty() {
-                    log::info!(
+                    log::debug!(
                         "{}: pulled {} messages",
                         &subscription_name,
                         received_messages.len()
@@ -321,7 +318,7 @@ impl Subscriber for SubscriberService {
         &self,
         request: Request<Streaming<StreamingPullRequest>>,
     ) -> Result<Response<Self::StreamingPullStream>, Status> {
-        let start = Instant::now();
+        let start = ActivitySpan::start();
         let mut stream = request.into_inner();
         let request = match stream.next().await {
             None => return Err(Status::cancelled("The request was canceled")),
@@ -331,11 +328,7 @@ impl Subscriber for SubscriberService {
         let subscription_name = parser::parse_subscription_name(&request.subscription)?;
         let subscription = get_subscription(&self.subscription_manager, &subscription_name)?;
 
-        log::info!(
-            "{}: starting streaming pull ({:?})",
-            subscription_name,
-            start.elapsed()
-        );
+        log::debug!("{}: starting streaming pull {}", subscription_name, start);
 
         // Pulls messages and streams them to the client.
         let pull_stream = {
@@ -370,7 +363,7 @@ impl Subscriber for SubscriberService {
 
                     // If we received any messages, yield them back.
                     if !received_messages.is_empty() {
-                        log::info!(
+                        log::debug!(
                             "{}: streaming-pulled {} messages",
                             &subscription_name,
                             received_messages.len()
@@ -531,7 +524,7 @@ async fn handle_streaming_pull_request(
 
     // Ack messages if appropriate.
     if !request.ack_ids.is_empty() {
-        let start = Instant::now();
+        let start = ActivitySpan::start();
         let ack_ids = request
             .ack_ids
             .iter()
@@ -546,16 +539,17 @@ async fn handle_streaming_pull_request(
                 AcknowledgeMessagesError::Closed => conflict(),
             })?;
 
-        log::info!(
-            "{}: acked {} messages ({:?})",
+        log::debug!(
+            "{}: acked {} messages {}",
             &subscription.name,
             ack_id_count,
-            start.elapsed()
+            start
         );
     }
 
     // Extend deadlines if requested to do so.
     if !request.modify_deadline_ack_ids.is_empty() {
+        let start = ActivitySpan::start();
         let now = Instant::now();
         let deadline_modifications = parser::parse_deadline_modifications(
             now,
@@ -571,11 +565,11 @@ async fn handle_streaming_pull_request(
                 ModifyDeadlineError::Closed => conflict(),
             })?;
 
-        log::info!(
-            "{}: modified {} deadlines ({:?})",
+        log::debug!(
+            "{}: modified {} deadlines {}",
             &subscription.name,
             modifications_count,
-            now.elapsed()
+            start
         );
     }
 

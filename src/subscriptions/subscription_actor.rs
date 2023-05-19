@@ -285,7 +285,7 @@ impl SubscriptionActor {
 
     /// Handles expired messages by putting them back into the backlog.
     fn handle_expired_messages(&mut self, expired: Vec<PulledMessage>) {
-        log::info!("{}: {} messages expired", &self.info.name, expired.len());
+        log::debug!("{}: {} messages expired", &self.info.name, expired.len());
         self.backlog
             .append(expired.into_iter().map(|p| p.into_message()));
 

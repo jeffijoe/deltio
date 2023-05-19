@@ -4,6 +4,7 @@ pub mod paging;
 pub mod pubsub_proto;
 pub mod subscriptions;
 pub mod topics;
+mod tracing;
 
 use crate::api::subscriber::SubscriberService;
 use crate::pubsub_proto::publisher_server::PublisherServer;
