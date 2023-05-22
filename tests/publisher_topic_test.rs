@@ -224,50 +224,47 @@ async fn test_list_topic_subscriptions() {
 
 // Actors: Creating took 244.654333ms, Getting page 2 took 2.243458ms
 // RwLock: Creating took 222.814875ms, Getting page 2 took 2.857791ms
-// #[tokio::test]
-// async fn test_list_bench() {
-//     let mut server = TestHost::start().await.unwrap();
-//     let topic_names = (0..10_000).map(|_| TopicName::new("test", &Uuid::new_v4().to_string()));
-//
-//     let now = std::time::Instant::now();
-//     futures::future::join_all(topic_names.map(|n| {
-//         let name = n.clone();
-//         let mut publisher = server.publisher.clone();
-//         tokio::spawn(async move { create_topic(&mut publisher, &name).await })
-//     }))
-//     .await;
-//     let elapsed = now.elapsed();
-//     println!("Creating took {:?}", elapsed);
-//
-//     // Get the topic that was created.
-//     let list_response = server
-//         .publisher
-//         .list_topics(ListTopicsRequest {
-//             project: "test".to_string(),
-//             page_size: 5_000,
-//             page_token: "".to_string(),
-//         })
-//         .await
-//         .unwrap();
-//
-//     let list_response = list_response.get_ref();
-//     assert_eq!(list_response.topics.len(), 5_000);
-//
-//     let now = std::time::Instant::now();
-//     // Get the next page.
-//     let list_response = server
-//         .publisher
-//         .list_topics(ListTopicsRequest {
-//             project: "test".to_string(),
-//             page_size: 5_000,
-//             page_token: list_response.next_page_token.clone(),
-//         })
-//         .await
-//         .unwrap();
-//     let elapsed = now.elapsed();
-//     println!("Getting page 2 took {:?}", elapsed);
-//     let list_response = list_response.get_ref();
-//     assert_eq!(list_response.topics.len(), 5_000);
-//
-//     server.dispose().await;
-// }
+#[tokio::test]
+async fn test_list_bench() {
+    let mut server = TestHost::start().await.unwrap();
+    let topic_names = (0..10_000).map(|_| TopicName::new("test", &Uuid::new_v4().to_string()));
+
+    let now = std::time::Instant::now();
+    futures::future::join_all(topic_names.map(|n| {
+        let mut publisher = server.publisher.clone();
+        tokio::spawn(async move { publisher.create_topic(map_to_topic_resource(&n)).await })
+    }))
+    .await;
+    let elapsed = now.elapsed();
+    println!("Creating took {:?}", elapsed);
+
+    // Get the topic that was created.
+    let list_response = server
+        .publisher
+        .list_topics(ListTopicsRequest {
+            project: "projects/test".to_string(),
+            page_size: 1_000,
+            page_token: "".to_string(),
+        })
+        .await
+        .unwrap();
+
+    let list_response = list_response.get_ref();
+    assert_eq!(list_response.topics.len(), 1_000);
+
+    let now = std::time::Instant::now();
+    // Get the next page.
+    server
+        .publisher
+        .list_topics(ListTopicsRequest {
+            project: "projects/test".to_string(),
+            page_size: 1_000,
+            page_token: list_response.next_page_token.clone(),
+        })
+        .await
+        .unwrap();
+    let elapsed = now.elapsed();
+    println!("Getting page 2 took {:?}", elapsed);
+
+    server.dispose().await;
+}
