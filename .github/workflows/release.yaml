@@ -125,6 +125,7 @@ jobs:
             os: ubuntu-latest
             artifact_name: deltio
             asset_name: deltio-${{ needs.tag.outputs.tag }}-linux-musl-x86
+            install_linker: musl-tools
 
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
@@ -135,6 +136,7 @@ jobs:
             os: ubuntu-latest
             artifact_name: deltio
             asset_name: deltio-${{ needs.tag.outputs.tag }}-linux-musl-x86_64
+            install_linker: musl-tools
 
           # macOS
           - target: x86_64-apple-darwin
