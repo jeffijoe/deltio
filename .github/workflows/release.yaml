@@ -102,6 +102,12 @@ jobs:
             artifact_name: deltio
             asset_name: deltio-${{ needs.tag.outputs.tag }}-linux-aarch64
             install_linker: gcc-aarch64-linux-gnu
+            
+          - target: aarch64-unknown-linux-musl
+            os: ubuntu-latest
+            artifact_name: deltio
+            asset_name: deltio-${{ needs.tag.outputs.tag }}-linux-musl-aarch64
+            install_linker: aarch64-linux-musl-cross
 
           - target: armv7-unknown-linux-gnueabihf
             os: ubuntu-latest
@@ -162,8 +168,15 @@ jobs:
       - name: Install Cross-Platform Linker
         if: ${{ matrix.install_linker }}
         run: |
-          sudo apt-get update
-          sudo apt-get install -y ${{ matrix.install_linker }}
+          # Special instructions for installing the aarch64 linker for musl
+          if [ "${{ matrix.install_linker }}" = "aarch64-linux-musl-cross" ]; then
+            wget -P ~ https://musl.cc/aarch64-linux-musl-cross.tgz
+            tar -xvf ~/aarch64-linux-musl-cross.tgz -C "${HOME}"
+            echo "${HOME}/aarch64-linux-musl-cross/bin" >> $GITHUB_PATH
+          else
+            sudo apt-get update
+            sudo apt-get install -y ${{ matrix.install_linker }}
+          fi
 
       - name: Install Protoc
         uses: arduino/setup-protoc@v1

@@ -12,7 +12,7 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v3
-        
+
       - name: Install Protoc
         uses: arduino/setup-protoc@v1
         with:
@@ -23,7 +23,7 @@ jobs:
           rustup toolchain install stable --profile minimal --no-self-update
           rustup default stable
 
-      - name: Rust Cache  
+      - name: Rust Cache
         uses: Swatinem/rust-cache@v2
 
       - name: Build
@@ -40,12 +40,14 @@ jobs:
         run: cargo clippy
 
       - name: Style
+        # Only run on Ubuntu
         if: ${{ matrix.os == 'ubuntu-latest' }}
         run: cargo fmt --all -- --check
-          
+
       - name: Test
-        if: ${{ matrix.os == 'ubuntu-latest' }}
-        run: cargo test      
+        # Don't run on Windows because Unix sockets are not available.
+        if: ${{ matrix.os != 'windows-latest' }}
+        run: cargo test
 
 concurrency:
   cancel-in-progress: true

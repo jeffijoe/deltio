@@ -16,6 +16,15 @@ use std::sync::Arc;
 use tonic::transport::server::Router;
 use tonic::transport::Server;
 
+#[cfg(not(all(target_arch = "x86", target_os = "linux")))]
+use mimalloc::MiMalloc;
+
+#[cfg(not(all(target_arch = "x86", target_os = "linux")))]
+// Use MiMalloc as the global allocator for supported targets.
+#[global_allocator]
+static GLOBAL: MiMalloc = MiMalloc;
+
+/// Creates a server builder configured with the Pub/Sub gRPC services.
 pub fn make_server_builder() -> Router {
     let topic_manager = Arc::new(TopicManager::new());
     let subscription_manager = Arc::new(SubscriptionManager::new());

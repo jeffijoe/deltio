@@ -1,20 +1,14 @@
-use crate::topics::{MessageId, TopicMessage};
-use std::collections::{HashMap, VecDeque};
+use crate::topics::TopicMessage;
+use std::collections::VecDeque;
 use std::sync::Arc;
 
-/// Maintains a list of messages that can be enumerated in insertion order
-/// as well as looked up by ID.
+/// Maintains a list of messages that can be enumerated in insertion order.
 pub struct Messages {
     /// The message list.
     ///
     /// This is implemented as a `VecDeque` because we will be
     /// iterating and popping from the front.
     pub list: VecDeque<Arc<TopicMessage>>,
-
-    /// The map of messages.
-    /// Used for retrieving a message by ID.
-    /// TODO: Remove if this is not used.
-    pub map: HashMap<MessageId, Arc<TopicMessage>>,
 }
 
 impl Messages {
@@ -22,7 +16,6 @@ impl Messages {
     pub fn new() -> Self {
         Self {
             list: VecDeque::new(),
-            map: HashMap::new(),
         }
     }
 
@@ -32,12 +25,8 @@ impl Messages {
 
         // Attempt to reserve the additional capacity needed.
         let size_hint = iter.size_hint().0;
-        self.map.reserve(size_hint);
         self.list.reserve(size_hint);
-        self.list.extend(iter.map(|m| {
-            self.map.insert(m.id, Arc::clone(&m));
-            m
-        }));
+        self.list.extend(iter);
     }
 
     /// Returns the amount of messages contained within
@@ -52,16 +41,11 @@ impl Messages {
 
     /// Removes a message from the front of the queue.
     pub fn pop_front(&mut self) -> Option<Arc<TopicMessage>> {
-        self.list.pop_front().map(|message| {
-            // Also remove it from the map.
-            self.map.remove(&message.id);
-            message
-        })
+        self.list.pop_front()
     }
 
     /// Clears all the messages.
     pub fn clear(&mut self) {
-        self.map.clear();
         self.list.clear();
     }
 }
@@ -69,6 +53,7 @@ impl Messages {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::topics::MessageId;
 
     #[test]
     fn append_adds_messages_to_list_and_map() {
@@ -86,13 +71,9 @@ mod tests {
         assert_eq!(messages.len(), 2);
 
         assert_eq!(messages.list.len(), 2);
-        assert_eq!(messages.map.len(), 2);
 
         assert_eq!(messages.list[0].data[0], 0);
         assert_eq!(messages.list[1].data[0], 1);
-
-        assert_eq!(messages.list[0].id, messages.map[&ids[0]].id);
-        assert_eq!(messages.list[1].id, messages.map[&ids[1]].id);
     }
 
     #[test]

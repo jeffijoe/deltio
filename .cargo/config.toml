@@ -1,12 +1,25 @@
+# Custom linker + flags for certain targets.
+
 [target.arm-unknown-linux-gnueabihf]
 linker = "arm-linux-gnueabihf-gcc"
+# This target is 32-bit, and mimalloc uses CAS operations
+# which are not implemented in hardware on 32-bit architectures,
+# so we need to tell the linker to include the `atomic` library.
+rustflags = ["-C", "link-args=-latomic"]
 
 [target.aarch64-unknown-linux-gnu]
 linker = "aarch64-linux-gnu-gcc"
 
+[target.aarch64-unknown-linux-musl]
+# The included linker for this target doesn't seem to work.
+linker = "rust-lld"
+
 [target.armv7-unknown-linux-gnueabihf]
 linker = "arm-linux-gnueabihf-gcc"
 
-# # Use the sparse registry protocol for Cargo.
+[target.x86_64-unknown-linux-musl]
+linker = "musl-gcc"
+
+# Use the sparse registry protocol for Cargo.
 [registries.crates-io]
 protocol = "sparse"
