@@ -9,8 +9,11 @@ WORKDIR /deltio
 
 # The target platform we are compiling for.
 # Populated by BuildX
-ARG BUILDPLATFORM
 ARG TARGETPLATFORM
+
+# The build platform we are compiling on.
+# Populated by BuildX
+ARG BUILDPLATFORM
 
 # Install the required cross-compiler toolchain based on the target platform.
 # Basically, if the target platform is ARM, then we'll need 
@@ -31,20 +34,26 @@ RUN <<EOF
   echo "Target platform: $TARGETPLATFORM"
   apt-get update
   if [ "$TARGETPLATFORM" = "linux/arm64" ]; then
-    apt-get install -y gcc-aarch64-linux-gnu
-    rustup target add aarch64-unknown-linux-gnu
-    echo -n "aarch64-unknown-linux-gnu" > .target
+    # musl-cross isn't available via apt-get, so have to download and install it manually.
+    mkdir /opt/musl-cross
+    wget -P /opt/musl-cross https://musl.cc/aarch64-linux-musl-cross.tgz
+    tar -xvf /opt/musl-cross/aarch64-linux-musl-cross.tgz -C "/opt/musl-cross"
+    rustup target add aarch64-unknown-linux-musl
+    echo -n "aarch64-unknown-linux-musl" > .target
   else
-    apt-get install -y gcc-multilib
+    apt-get install -y musl-tools
     if [ "$TARGETPLATFORM" = "linux/amd64" ]; then
-      rustup target add x86_64-unknown-linux-gnu
-      echo -n "x86_64-unknown-linux-gnu" > .target
+      rustup target add x86_64-unknown-linux-musl
+      echo -n "x86_64-unknown-linux-musl" > .target
     elif [ "$TARGETPLATFORM" = "linux/386" ]; then
-      rustup target add i686-unknown-linux-gnu
-      echo -n "i686-unknown-linux-gnu" > .target
+      rustup target add i686-unknown-linux-musl
+      echo -n "i686-unknown-linux-musl" > .target
     fi
   fi
 EOF
+
+# In case we installed the musl-cross tools, add it to the path.
+ENV PATH="/opt/musl-cross/aarch64-linux-musl-cross/bin:${PATH}"
 
 # Copy manifests.
 COPY ./.cargo/config.toml ./.cargo/config.toml
@@ -56,7 +65,7 @@ RUN <<EOF
   set -e;
 
   # If the build platform is the same as the target platform, we don't
-  # to use any target.
+  # need to use any target.
   if [ "$BUILDPLATFORM" = "$TARGETPLATFORM" ]; then
     cargo build --release
     rm ./target/release/deps/deltio*
@@ -79,7 +88,7 @@ COPY ./src ./src
 RUN <<EOF
   set -e;
   # If the build platform is the same as the target platform, we don't
-  # to use any target.
+  # need to use any target.
   if [ "$BUILDPLATFORM" = "$TARGETPLATFORM" ]; then
     cargo build --release
     exit 0
@@ -91,7 +100,7 @@ RUN <<EOF
 EOF
 
 # Our final base image.
-FROM --platform=$TARGETPLATFORM debian:buster-slim as deltio
+FROM --platform=$TARGETPLATFORM scratch as deltio
 
 # Copy the build artifact from the build stage
 COPY --from=build /deltio/target/release/deltio .
@@ -100,5 +109,4 @@ COPY --from=build /deltio/target/release/deltio .
 EXPOSE 8085
 
 # Set the startup command to run the binary.
-ENV RUST_LOG=info
 CMD ["./deltio", "--bind", "0.0.0.0:8085"]
