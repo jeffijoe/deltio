@@ -11,14 +11,13 @@ rustflags = ["-C", "link-args=-latomic"]
 linker = "aarch64-linux-gnu-gcc"
 
 [target.aarch64-unknown-linux-musl]
-# The included linker for this target doesn't seem to work.
 linker = "rust-lld"
 
 [target.armv7-unknown-linux-gnueabihf]
 linker = "arm-linux-gnueabihf-gcc"
 
 [target.x86_64-unknown-linux-musl]
-linker = "musl-gcc"
+linker = "rust-lld"
 
 # Use the sparse registry protocol for Cargo.
 [registries.crates-io]
