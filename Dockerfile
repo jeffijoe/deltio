@@ -1,7 +1,7 @@
 FROM --platform=$BUILDPLATFORM rust:1.69 as build
 
 # Install Protocol Buffers.
-RUN apt-get update && apt-get install -y protobuf-compiler
+RUN apt-get update && apt-get install -y protobuf-compiler musl-tools musl-dev
 
 # Create a new empty project.
 RUN cargo new --bin deltio
@@ -22,17 +22,11 @@ ARG BUILDPLATFORM
 # IMPORTANT: This only seems to work on a x86_64 Linux build platform. 
 RUN <<EOF
   set -e;
-  
-  # If the build platform is the same as the target platform, we don't
-  # need any more packages.
-  if [ "$BUILDPLATFORM" = "$TARGETPLATFORM" ]; then
-    echo "Build and target platform are the same, won't install extra stuff"
-    exit 0
-  fi
 
-  echo "Build platform: $BUILDPLATFORM"
-  echo "Target platform: $TARGETPLATFORM"
-  apt-get update
+  # This is the file we will be writing the compilation target to for
+  # subsequent steps.
+  touch .target
+  
   if [ "$TARGETPLATFORM" = "linux/arm64" ]; then
     # musl-cross isn't available via apt-get, so have to download and install it manually.
     mkdir /opt/musl-cross
@@ -41,7 +35,6 @@ RUN <<EOF
     rustup target add aarch64-unknown-linux-musl
     echo -n "aarch64-unknown-linux-musl" > .target
   else
-    apt-get install -y musl-tools
     if [ "$TARGETPLATFORM" = "linux/amd64" ]; then
       rustup target add x86_64-unknown-linux-musl
       echo -n "x86_64-unknown-linux-musl" > .target
@@ -66,11 +59,11 @@ RUN <<EOF
 
   # If the build platform is the same as the target platform, we don't
   # need to use any target.
-  if [ "$BUILDPLATFORM" = "$TARGETPLATFORM" ]; then
+  TARGET=$(cat .target)
+  if [ -z "$TARGET" ]; then
     cargo build --release
     rm ./target/release/deps/deltio*
   else
-    TARGET=$(cat .target)
     cargo build --target "$TARGET" --release
     rm ./target/*/release/deps/deltio*
   fi
@@ -89,12 +82,12 @@ RUN <<EOF
   set -e;
   # If the build platform is the same as the target platform, we don't
   # need to use any target.
-  if [ "$BUILDPLATFORM" = "$TARGETPLATFORM" ]; then
+  TARGET=$(cat .target)
+  if [ -z "$TARGET" ]; then
     cargo build --release
     exit 0
   fi
 
-  TARGET=$(cat .target)
   cargo build --target "$TARGET" --release
   mv "target/$TARGET/release/deltio" "target/release/deltio"
 EOF
