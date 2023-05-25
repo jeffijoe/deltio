@@ -23,7 +23,7 @@ parking_lot = "0.12.1"
 log = "0.4.17"
 env_logger = "0.10.0"
 lazy_static = "1.4.0"
-clap = { version = "4.2.7", features = ["derive"] }
+clap = { version = "4.2.7", features = ["derive", "cargo"] }
 
 # MiMalloc does not currently cross-compile for `i686-unknown-linux-musl` target,
 # so we'll disable MiMalloc for x86 Linux for now.

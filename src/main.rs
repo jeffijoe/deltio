@@ -67,7 +67,11 @@ async fn main_core(args: Cli) -> Result<(), Box<dyn std::error::Error>> {
     let server = make_server_builder();
 
     // Start listening (TCP).
-    log::info!("Deltio starting, listening on {}", &args.bind);
+    log::info!(
+        "Deltio v{} starting, listening on {}",
+        clap::crate_version!(),
+        &args.bind
+    );
     server.serve_with_shutdown(args.bind, signal).await?;
 
     log::info!("Deltio stopped");
