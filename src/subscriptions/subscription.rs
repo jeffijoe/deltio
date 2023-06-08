@@ -1,3 +1,4 @@
+use crate::push::PushSubscriptionsRegistry;
 use crate::subscriptions::errors::*;
 use crate::subscriptions::futures::{Deleted, MessagesAvailable};
 use crate::subscriptions::subscription_actor::{
@@ -9,6 +10,7 @@ use crate::subscriptions::{
 };
 use crate::topics::{Topic, TopicMessage};
 use std::cmp::Ordering;
+use std::collections::HashMap;
 use std::sync::{Arc, Weak};
 use std::time::Duration;
 use tokio::sync::{mpsc, oneshot};
@@ -39,6 +41,28 @@ pub struct SubscriptionInfo {
 
     /// The ACK deadline duration (if not specified in pull call).
     pub ack_deadline: Duration,
+
+    /// If specified, pushes messages to the configured endpoint.
+    pub push_config: Option<PushConfig>,
+}
+
+/// Configuration for push subscriptions.
+#[derive(Debug, Clone)]
+pub struct PushConfig {
+    /// The endpoint to push messages to.
+    pub endpoint: String,
+    /// Not used, stored for pass-through.
+    pub oidc_token: Option<PushConfigOidcToken>,
+    /// Not used, stored for pass-through.
+    pub attributes: Option<HashMap<String, String>>,
+}
+
+/// This structure is stored just for pass-through. It is
+/// not used for anything.
+#[derive(Debug, Clone)]
+pub struct PushConfigOidcToken {
+    pub audience: String,
+    pub service_account_email: String,
 }
 
 impl Subscription {
@@ -47,13 +71,21 @@ impl Subscription {
         info: SubscriptionInfo,
         internal_id: u32,
         topic: Arc<Topic>,
+        push_registry: PushSubscriptionsRegistry,
         delegate: SubscriptionManagerDelegate,
     ) -> Self {
         let observer = Arc::new(SubscriptionObserver::new());
 
         // Create the actor, pass in the observer.
         let name = info.name.clone();
-        let sender = SubscriptionActor::start(info, topic.clone(), Arc::clone(&observer), delegate);
+        let sender = SubscriptionActor::start(
+            internal_id,
+            info,
+            Arc::clone(&topic),
+            Arc::clone(&observer),
+            push_registry,
+            delegate,
+        );
         let topic = Arc::downgrade(&topic);
         Self {
             name,
@@ -192,8 +224,16 @@ impl Ord for Subscription {
 
 impl SubscriptionInfo {
     /// Creates a new `SubscriptionInfo`.
-    pub fn new(name: SubscriptionName, ack_deadline: Duration) -> Self {
-        Self { name, ack_deadline }
+    pub fn new(
+        name: SubscriptionName,
+        ack_deadline: Duration,
+        push_config: Option<PushConfig>,
+    ) -> Self {
+        Self {
+            name,
+            ack_deadline,
+            push_config,
+        }
     }
 
     /// Creates a new `SubscriptionInfo` with default values.
@@ -201,6 +241,22 @@ impl SubscriptionInfo {
         Self {
             name,
             ack_deadline: Duration::from_secs(10),
+            push_config: None,
+        }
+    }
+}
+
+impl PushConfig {
+    /// Creates a new `PushConfig`.
+    pub fn new(
+        endpoint: String,
+        oidc_token: Option<PushConfigOidcToken>,
+        attributes: Option<HashMap<String, String>>,
+    ) -> Self {
+        Self {
+            endpoint,
+            oidc_token,
+            attributes,
         }
     }
 }

@@ -1,7 +1,8 @@
 use clap::Parser;
-use deltio::make_server_builder;
+use deltio::Deltio;
 use log::LevelFilter;
 use std::net::SocketAddr;
+use std::time::Duration;
 
 #[derive(Parser)]
 #[command(version, about)]
@@ -13,6 +14,10 @@ struct Cli {
     /// The log level to use.
     #[arg(short, long, value_name = "LEVEL", default_value = "info")]
     log: LogLevelArg,
+
+    /// How frequently (in milliseconds) to check push subscriptions for new messages.
+    #[arg(long, value_name = "MILLIS", default_value = "1000")]
+    push_loop_interval: u64,
 
     /// Whether to run Deltio on a single thread instead of a worker pool of threads (one per CPU)
     #[arg(short, long)]
@@ -50,10 +55,8 @@ async fn main_core(args: Cli) -> Result<(), Box<dyn std::error::Error>> {
     // Configure the logger.
     env_logger::builder()
         .format_target(false)
-        .filter_level(map_log_level(args.log))
-        // Turn off noisy library logs.
-        .filter_module("h2", LevelFilter::Off)
-        .filter_module("hyper", LevelFilter::Off)
+        .filter_level(LevelFilter::Off)
+        .filter_module("deltio", map_log_level(args.log))
         .parse_default_env()
         .init();
 
@@ -64,15 +67,24 @@ async fn main_core(args: Cli) -> Result<(), Box<dyn std::error::Error>> {
     };
 
     // Create the server.
-    let server = make_server_builder();
-
-    // Start listening (TCP).
+    let app = Deltio::new();
     log::info!(
         "Deltio v{} starting, listening on {}",
         clap::crate_version!(),
         &args.bind
     );
-    server.serve_with_shutdown(args.bind, signal).await?;
+
+    let server = app.server_builder();
+    let push_loop_fut = app
+        .push_loop(Duration::from_millis(args.push_loop_interval))
+        .run();
+
+    // Start listening (TCP).
+    let server_fut = server.serve_with_shutdown(args.bind, signal);
+    tokio::select! {
+        server_result = server_fut => server_result?,
+        _ = push_loop_fut => {}
+    }
 
     log::info!("Deltio stopped");
 

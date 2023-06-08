@@ -154,6 +154,8 @@ async fn test_delete() {
         .await
         .unwrap_err();
     assert_eq!(status.code(), Code::NotFound);
+
+    server.dispose().await;
 }
 
 #[tokio::test]
@@ -220,6 +222,8 @@ async fn test_list_topic_subscriptions() {
 
     assert_eq!(page.subscriptions.len(), 0);
     assert_eq!(page.next_page_token, String::default());
+
+    server.dispose().await;
 }
 
 // #[tokio::test]

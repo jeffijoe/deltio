@@ -8,7 +8,8 @@ use std::sync::Arc;
 #[tokio::test]
 async fn delete_topic() {
     let topic_manager = TopicManager::new();
-    let subscription_manager = SubscriptionManager::new();
+    let push_registry = Default::default();
+    let subscription_manager = SubscriptionManager::new(push_registry);
 
     let topic_name = TopicName::new("test", "topic");
     let subscription_name = SubscriptionName::new("test", "subscription");

@@ -241,49 +241,11 @@ async fn test_streaming_pull() {
         collect_text_messages(&pull_response),
         vec!["Woah", "Much Resilient"]
     );
-}
 
-// The `return_immediately` field is deprecated in the proto,
-// but we need to specify it.
-#[allow(deprecated)]
-#[tokio::test]
-async fn test_rpc_pull() {
-    let mut server = TestHost::start().await.unwrap();
-
-    // Create a topic to subscribe to.
-    let topic_name = TopicName::new("test", "topic");
-    server.create_topic_with_name(&topic_name).await;
-
-    // Create a subscription.
-    let subscription_name = SubscriptionName::new("test", "subscription");
-    server
-        .create_subscription_with_name(&topic_name, &subscription_name)
-        .await;
-
-    // Start a task that pulls for messages. We are not using `return_immediately`, so
-    // we should be able to start it early and have it wait for new messages.
-    let pull_task = tokio::spawn({
-        let mut subscriber = server.subscriber.clone();
-        async move {
-            subscriber
-                .pull(PullRequest {
-                    subscription: subscription_name.to_string(),
-                    max_messages: 10,
-                    return_immediately: false,
-                })
-                .await
-                .unwrap()
-                .into_inner()
-        }
-    });
-
-    // Publish some messages, wait for them to be retrieved.
-    server
-        .publish_text_messages(&topic_name, vec!["Hello".into(), "World".into()])
-        .await;
-
-    let pull_response = pull_task.await.unwrap();
-    assert_eq!(pull_response.received_messages.len(), 2);
+    // Drop the streaming calls so the shutdown won't wait for them.
+    drop(sender);
+    drop(inbound);
+    server.dispose().await;
 }
 
 #[tokio::test]
@@ -358,6 +320,56 @@ async fn test_streaming_pull_deadline_extension() {
             .message_id,
         initial_message2.message.unwrap().message_id
     );
+
+    // Drop the streaming calls so the shutdown won't wait for them.
+    drop(sender);
+    drop(inbound);
+    server.dispose().await;
+}
+
+// The `return_immediately` field is deprecated in the proto,
+// but we need to specify it.
+#[allow(deprecated)]
+#[tokio::test]
+async fn test_rpc_pull() {
+    let mut server = TestHost::start().await.unwrap();
+
+    // Create a topic to subscribe to.
+    let topic_name = TopicName::new("test", "topic");
+    server.create_topic_with_name(&topic_name).await;
+
+    // Create a subscription.
+    let subscription_name = SubscriptionName::new("test", "subscription");
+    server
+        .create_subscription_with_name(&topic_name, &subscription_name)
+        .await;
+
+    // Start a task that pulls for messages. We are not using `return_immediately`, so
+    // we should be able to start it early and have it wait for new messages.
+    let pull_task = tokio::spawn({
+        let mut subscriber = server.subscriber.clone();
+        async move {
+            subscriber
+                .pull(PullRequest {
+                    subscription: subscription_name.to_string(),
+                    max_messages: 10,
+                    return_immediately: false,
+                })
+                .await
+                .unwrap()
+                .into_inner()
+        }
+    });
+
+    // Publish some messages, wait for them to be retrieved.
+    server
+        .publish_text_messages(&topic_name, vec!["Hello".into(), "World".into()])
+        .await;
+
+    let pull_response = pull_task.await.unwrap();
+    assert_eq!(pull_response.received_messages.len(), 2);
+
+    server.dispose().await;
 }
 
 #[tokio::test]
@@ -421,6 +433,8 @@ async fn test_deleting_subscription() {
         .unwrap()
         .into_inner();
     assert_eq!(response.subscriptions.len(), 0);
+
+    server.dispose().await;
 }
 
 fn collect_text_messages(pull_response: &StreamingPullResponse) -> Vec<String> {
