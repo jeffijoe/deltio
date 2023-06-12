@@ -10,9 +10,6 @@ pub(crate) struct OutstandingMessageTracker {
     messages: HashMap<AckId, PulledMessage>,
 
     /// A sorted set of expirations. Used for scheduling NACKs.
-    ///
-    /// Since we want a min-heap (popping the lowest value first), we
-    /// need to wrap the items in `Reverse`.
     expirations: BTreeSet<(AckDeadline, AckId)>,
 
     /// Notify when a new, earlier deadline has been inserted.
