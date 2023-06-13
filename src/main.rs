@@ -56,7 +56,7 @@ async fn main_core(args: Cli) -> Result<(), Box<dyn std::error::Error>> {
     env_logger::builder()
         .format_target(false)
         .filter_level(LevelFilter::Off)
-        .filter_module("deltio", map_log_level(args.log))
+        .filter_module("deltio:*", map_log_level(args.log))
         .parse_default_env()
         .init();
 
