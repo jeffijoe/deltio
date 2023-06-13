@@ -153,10 +153,7 @@ jobs:
             os: windows-latest
             artifact_name: deltio.exe
             asset_name: deltio-${{ needs.tag.outputs.tag }}-windows-x86_64
-          - target: aarch64-pc-windows-msvc
-            os: windows-latest
-            artifact_name: deltio.exe
-            asset_name: deltio-${{ needs.tag.outputs.tag }}-windows-aarch64
+
     steps:
       - name: Checkout
         uses: actions/checkout@v3
@@ -179,6 +176,15 @@ jobs:
             sudo apt-get update
             sudo apt-get install -y ${{ matrix.install_linker }}
           fi
+
+      # We need to use clang because `ring` (used by `rustls`) won't compile with gcc.
+      - name: Configure clang as C and C++ compiler (Linux)
+        # Don't use clang for aarch64 musl Linux, as we're installing a special cross-compiler
+        # for that target.
+        if: ${{ matrix.os == 'ubuntu-latest' && matrix.target != 'aarch64-unknown-linux-musl' }}
+        run: |
+          echo "CC=clang" >> "$GITHUB_ENV"
+          echo "CXX=clang++" >> "$GITHUB_ENV"
 
       - name: Install Protoc
         uses: arduino/setup-protoc@v1

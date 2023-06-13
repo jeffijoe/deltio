@@ -1,7 +1,7 @@
 FROM --platform=$BUILDPLATFORM rust:1.69 as build
 
 # Install Protocol Buffers.
-RUN apt-get update && apt-get install -y protobuf-compiler musl-tools musl-dev
+RUN apt-get update && apt-get install -y protobuf-compiler clang musl-tools musl-dev
 
 # Create a new empty project.
 RUN cargo new --bin deltio
@@ -60,6 +60,12 @@ RUN <<EOF
   # If the build platform is the same as the target platform, we don't
   # need to use any target.
   TARGET=$(cat .target)
+  # Use clang except for aarch64 musl
+  if [ "$TARGET" != "aarch64-unknown-linux-musl" ]; then
+    export CC="clang"
+    export CXX="clang++"
+  fi
+
   if [ -z "$TARGET" ]; then
     cargo build --release
     rm ./target/release/deps/deltio*
@@ -83,6 +89,13 @@ RUN <<EOF
   # If the build platform is the same as the target platform, we don't
   # need to use any target.
   TARGET=$(cat .target)
+  
+  # Use clang except for aarch64 musl
+  if [ "$TARGET" != "aarch64-unknown-linux-musl" ]; then
+    export CC="clang"
+    export CXX="clang++"
+  fi 
+  
   if [ -z "$TARGET" ]; then
     cargo build --release
     exit 0
