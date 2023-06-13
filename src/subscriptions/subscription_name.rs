@@ -89,6 +89,16 @@ mod tests {
     }
 
     #[test]
+    fn lol() {
+        println!("{}", std::mem::size_of::<SubscriptionName>());
+        println!("{}", std::mem::size_of::<u32>());
+        println!(
+            "{}",
+            std::mem::size_of::<std::sync::Arc<SubscriptionName>>()
+        );
+    }
+
+    #[test]
     fn parse_invalid() {
         assert_eq!(
             SubscriptionName::try_parse("projects/lets-go/subscriptions"),

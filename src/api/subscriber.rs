@@ -1,11 +1,12 @@
 use crate::api::page_token::PageToken;
 use crate::api::parser;
+use crate::pubsub_proto::push_config::{AuthenticationMethod, OidcToken};
 use crate::pubsub_proto::subscriber_server::Subscriber;
 use crate::pubsub_proto::{
     AcknowledgeRequest, CreateSnapshotRequest, DeleteSnapshotRequest, DeleteSubscriptionRequest,
     GetSnapshotRequest, GetSubscriptionRequest, ListSnapshotsRequest, ListSnapshotsResponse,
     ListSubscriptionsRequest, ListSubscriptionsResponse, ModifyAckDeadlineRequest,
-    ModifyPushConfigRequest, PubsubMessage, PullRequest, PullResponse, ReceivedMessage,
+    ModifyPushConfigRequest, PubsubMessage, PullRequest, PullResponse, PushConfig, ReceivedMessage,
     SeekRequest, SeekResponse, Snapshot, StreamingPullRequest, StreamingPullResponse, Subscription,
     UpdateSnapshotRequest, UpdateSubscriptionRequest,
 };
@@ -59,7 +60,13 @@ impl Subscriber for SubscriberService {
             v if v <= 10 => Duration::from_secs(10),
             _ => Duration::from_secs(request.ack_deadline_seconds as u64),
         };
-        let subscription_info = SubscriptionInfo::new(subscription_name.clone(), ack_deadline);
+        let push_config = request
+            .push_config
+            .as_ref()
+            .map(parser::parse_push_config)
+            .transpose()?;
+        let subscription_info =
+            SubscriptionInfo::new(subscription_name.clone(), ack_deadline, push_config);
 
         let topic = self
             .topic_manager
@@ -73,7 +80,7 @@ impl Subscriber for SubscriberService {
 
         let subscription = self
             .subscription_manager
-            .create_subscription(subscription_info, topic.clone())
+            .create_subscription(subscription_info, Arc::clone(&topic))
             .await
             .map_err(|e| match e {
                 CreateSubscriptionError::AlreadyExists => Status::already_exists(format!(
@@ -625,7 +632,16 @@ fn map_to_subscription_resource(
     Subscription {
         name: subscription.name.to_string(),
         topic: topic_name,
-        push_config: None,
+        push_config: info.push_config.as_ref().map(|config| PushConfig {
+            attributes: config.attributes.clone().unwrap_or_default(),
+            push_endpoint: config.endpoint.to_string(),
+            authentication_method: config.oidc_token.as_ref().map(|token| {
+                AuthenticationMethod::OidcToken(OidcToken {
+                    service_account_email: token.service_account_email.to_string(),
+                    audience: token.audience.to_string(),
+                })
+            }),
+        }),
         bigquery_config: None,
         ack_deadline_seconds: info.ack_deadline.as_secs() as i32,
         retain_acked_messages: false,

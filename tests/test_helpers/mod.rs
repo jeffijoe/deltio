@@ -1,4 +1,3 @@
-use deltio::make_server_builder;
 use deltio::pubsub_proto::publisher_client::PublisherClient;
 use deltio::pubsub_proto::subscriber_client::SubscriberClient;
 use deltio::pubsub_proto::{
@@ -7,6 +6,9 @@ use deltio::pubsub_proto::{
 };
 use deltio::subscriptions::SubscriptionName;
 use deltio::topics::TopicName;
+use deltio::Deltio;
+use futures::FutureExt;
+use std::time::Duration;
 use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::mpsc::Sender;
 use tokio_stream::wrappers::UnixListenerStream;
@@ -39,7 +41,7 @@ pub struct TestHost {
     sock_file: String,
 
     /// Used for waiting for the server to terminate.
-    server_join_handle: tokio::task::JoinHandle<()>,
+    join_handle: tokio::task::JoinHandle<()>,
 
     /// Sender to send the shutdown signal to the server.
     shutdown_send: tokio::sync::oneshot::Sender<()>,
@@ -63,17 +65,36 @@ impl TestHost {
         // Create a oneshot channel to trigger shutdown.
         let (shutdown_send, shutdown_recv) = tokio::sync::oneshot::channel::<()>();
 
+        let app = Deltio::new();
+        let server_builder = app.server_builder();
+
+        let shutdown_fut = async { shutdown_recv.await.unwrap_or(()) }.shared();
+
         // Future for starting the server using the Unix socket and the shutdown signal.
-        let server_fut = async move {
-            let shutdown_fut = async { shutdown_recv.await.unwrap_or(()) };
-            make_server_builder()
-                .serve_with_incoming_shutdown(uds_stream, shutdown_fut)
-                .await
-                .unwrap();
+        let server_fut = {
+            let shutdown_fut = shutdown_fut.clone();
+            async move {
+                server_builder
+                    .serve_with_incoming_shutdown(uds_stream, shutdown_fut)
+                    .await
+                    .unwrap();
+            }
         };
 
-        // Poll the server future in a spawned task to start the server.
-        let server_join_handle = tokio::spawn(server_fut);
+        // Future for running the push loop.
+        let push_loop = app.push_loop(Duration::from_secs(1));
+        let push_loop_fut = async move {
+            tokio::select! {
+                _ = push_loop.run() => {},
+                _ = shutdown_fut => {},
+            }
+        };
+
+        // Poll the server future + push loop future in a spawned task to start the server
+        // and run the loop.
+        let join_handle = tokio::spawn(async move {
+            tokio::join!(server_fut, push_loop_fut);
+        });
 
         // Create a channel used for connecting to the server using
         // the Unix socket.
@@ -93,7 +114,7 @@ impl TestHost {
             publisher,
             subscriber,
             sock_file,
-            server_join_handle,
+            join_handle,
             shutdown_send,
         })
     }
@@ -101,7 +122,7 @@ impl TestHost {
     /// Disposes the test host and waits for it to terminate.
     pub async fn dispose(self) {
         self.shutdown_send.send(()).unwrap();
-        self.server_join_handle.await.unwrap();
+        self.join_handle.await.unwrap();
         let _ = tokio::fs::remove_file(self.sock_file).await;
     }
 

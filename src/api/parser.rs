@@ -1,7 +1,10 @@
 use crate::api::page_token::PageToken;
 use crate::paging::Paging;
+use crate::pubsub_proto::push_config::AuthenticationMethod;
+use crate::pubsub_proto::PushConfig as PushConfigProto;
 use crate::subscriptions::{
-    AckDeadline, AckId, AckIdParseError, DeadlineModification, SubscriptionName,
+    AckDeadline, AckId, AckIdParseError, DeadlineModification, PushConfig, PushConfigOidcToken,
+    SubscriptionName,
 };
 use crate::topics::TopicName;
 use std::time::Duration;
@@ -110,4 +113,29 @@ pub(crate) fn parse_project_id(raw_value: &str) -> Result<String, Status> {
         let project_id = raw_value.get(PROJECT_PREFIX_LEN..)?;
         Some(project_id.into())
     }
+}
+
+/// Parses a push config.
+pub(crate) fn parse_push_config(push_config_proto: &PushConfigProto) -> Result<PushConfig, Status> {
+    let endpoint = push_config_proto.push_endpoint.trim().to_string();
+    if !endpoint.starts_with("http") {
+        return Err(Status::invalid_argument("Unsupported push_endpoint"));
+    }
+
+    let oidc_token = push_config_proto
+        .authentication_method
+        .as_ref()
+        .map(|method| match method {
+            AuthenticationMethod::OidcToken(token) => PushConfigOidcToken {
+                audience: token.audience.clone(),
+                service_account_email: token.service_account_email.clone(),
+            },
+        });
+
+    let attributes = match push_config_proto.attributes.len() {
+        0 => None,
+        _ => Some(push_config_proto.attributes.clone()),
+    };
+
+    Ok(PushConfig::new(endpoint, oidc_token, attributes))
 }

@@ -76,6 +76,8 @@ As of this time, Deltio has **very limited functionality**, much less than the o
 * Streaming-pull messages
   * Including handling stream requests for acks and deadline modifications
   * Does **NOT** support flow control properties
+* Push subscriptions
+  * No flow control
 * Message expiration
 * Deleting subscriptions
 

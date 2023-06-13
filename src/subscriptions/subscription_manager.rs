@@ -1,4 +1,5 @@
 use crate::paging::Paging;
+use crate::push::PushSubscriptionsRegistry;
 use crate::subscriptions::paging::SubscriptionsPage;
 use crate::subscriptions::*;
 use crate::topics::{AttachSubscriptionError, Topic};
@@ -11,6 +12,9 @@ use std::sync::Arc;
 pub struct SubscriptionManager {
     /// The subscriptions state.
     state: Arc<RwLock<State>>,
+
+    /// Registry for push subscriptions.
+    push_registry: PushSubscriptionsRegistry,
 }
 
 /// The subscription manager internal state.
@@ -30,9 +34,10 @@ pub struct SubscriptionManagerDelegate {
 
 impl SubscriptionManager {
     /// Creates a new `SubscriptionManager`.
-    pub fn new() -> Self {
+    pub fn new(push_registry: PushSubscriptionsRegistry) -> Self {
         let state = Arc::new(RwLock::new(State::new()));
         Self {
+            push_registry,
             state: Arc::clone(&state),
         }
     }
@@ -53,7 +58,7 @@ impl SubscriptionManager {
             let mut state = self.state.write();
             // Create a delegate that the subscription can use to call back out.
             let delegate = SubscriptionManagerDelegate::new(Arc::clone(&self.state));
-            state.create_subscription(info, topic.clone(), delegate)?
+            state.create_subscription(info, topic.clone(), self.push_registry.clone(), delegate)?
         };
 
         topic
@@ -123,12 +128,6 @@ impl SubscriptionManager {
     }
 }
 
-impl Default for SubscriptionManager {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl State {
     /// Creates a new `State`.
     pub fn new() -> Self {
@@ -143,12 +142,19 @@ impl State {
         &mut self,
         info: SubscriptionInfo,
         topic: Arc<Topic>,
+        push_registry: PushSubscriptionsRegistry,
         delegate: SubscriptionManagerDelegate,
     ) -> Result<Arc<Subscription>, CreateSubscriptionError> {
         if let Entry::Vacant(entry) = self.subscriptions.entry(info.name.clone()) {
             self.next_id += 1;
             let internal_id = self.next_id;
-            let subscription = Arc::new(Subscription::new(info, internal_id, topic, delegate));
+            let subscription = Arc::new(Subscription::new(
+                info,
+                internal_id,
+                topic,
+                push_registry,
+                delegate,
+            ));
             entry.insert(subscription.clone());
             return Ok(subscription);
         }

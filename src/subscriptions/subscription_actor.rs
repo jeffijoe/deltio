@@ -1,4 +1,5 @@
 use crate::collections::Messages;
+use crate::push::PushSubscriptionsRegistry;
 use crate::subscriptions::errors::*;
 use crate::subscriptions::futures::{Deleted, MessagesAvailable};
 use crate::subscriptions::outstanding::OutstandingMessageTracker;
@@ -48,9 +49,12 @@ pub enum SubscriptionRequest {
 
 /// Actor for the subscription.
 pub(crate) struct SubscriptionActor {
+    /// The subscription's internal ID.
+    #[allow(dead_code)]
+    internal_id: u32,
+
     /// The topic that the subscription is attached to.
     /// We use a weak reference because the topic may be deleted.
-    #[allow(dead_code)]
     topic: Weak<Topic>,
 
     /// Info about the subscription.
@@ -65,6 +69,10 @@ pub(crate) struct SubscriptionActor {
     /// An observer to notify of various things such as new messages being available.
     observer: Arc<SubscriptionObserver>,
 
+    /// When the subscription is configured for push, it reports it
+    /// to the registry.
+    push_registry: PushSubscriptionsRegistry,
+
     /// Used for communicating to the manager of changes to the subscription.
     delegate: SubscriptionManagerDelegate,
 
@@ -78,16 +86,26 @@ pub(crate) struct SubscriptionActor {
 impl SubscriptionActor {
     /// Starts the actor.
     pub fn start(
+        internal_id: u32,
         info: SubscriptionInfo,
         topic: Arc<Topic>,
         observer: Arc<SubscriptionObserver>,
+        push_registry: PushSubscriptionsRegistry,
         delegate: SubscriptionManagerDelegate,
     ) -> mpsc::Sender<SubscriptionRequest> {
         let (sender, mut receiver) = mpsc::channel(16);
+
+        // If push is configured, register it with the push registry.
+        if info.push_config.is_some() {
+            push_registry.set(info.name.clone(), info.push_config.clone())
+        }
+
         let mut actor = Self {
+            internal_id,
             info,
             observer,
             delegate,
+            push_registry,
             topic: Arc::downgrade(&topic),
             backlog: Messages::new(),
             outstanding: OutstandingMessageTracker::new(),
@@ -265,6 +283,9 @@ impl SubscriptionActor {
         self.observer.notify_deleted();
         self.outstanding.clear();
         self.backlog.clear();
+
+        // Unregister the subscription from push.
+        self.push_registry.set(self.info.name.clone(), None);
 
         Ok(())
     }
