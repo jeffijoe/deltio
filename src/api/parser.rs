@@ -1,12 +1,13 @@
 use crate::api::page_token::PageToken;
 use crate::paging::Paging;
 use crate::pubsub_proto::push_config::AuthenticationMethod;
-use crate::pubsub_proto::PushConfig as PushConfigProto;
+use crate::pubsub_proto::{PubsubMessage, PushConfig as PushConfigProto};
 use crate::subscriptions::{
     AckDeadline, AckId, AckIdParseError, DeadlineModification, PushConfig, PushConfigOidcToken,
     SubscriptionName,
 };
-use crate::topics::TopicName;
+use crate::topics::{TopicMessage, TopicName};
+use bytes::Bytes;
 use std::time::Duration;
 use tokio::time::Instant;
 use tonic::Status;
@@ -138,4 +139,15 @@ pub(crate) fn parse_push_config(push_config_proto: &PushConfigProto) -> Result<P
     };
 
     Ok(PushConfig::new(endpoint, oidc_token, attributes))
+}
+
+/// Parses a `TopicMessage`.
+pub(crate) fn parse_topic_message(message_proto: &PubsubMessage) -> TopicMessage {
+    let data = Bytes::from(message_proto.data.clone());
+    let attributes = match message_proto.attributes.len() {
+        0 => None,
+        _ => Some(message_proto.attributes.clone()),
+    };
+
+    TopicMessage::new(data, attributes)
 }

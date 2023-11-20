@@ -333,7 +333,7 @@ mod tests {
 
     /// Helper for creating a pulled message.
     fn new_pulled_message(ack_id: u64, time: u64) -> PulledMessage {
-        let message = Arc::new(TopicMessage::new(Bytes::from("hello")));
+        let message = Arc::new(TopicMessage::new(Bytes::from("hello"), None));
         let ack_id = AckId::new(ack_id);
         let deadline = deadline_for(time);
         let delivery_attempt = 1;

@@ -21,8 +21,8 @@ async fn pulling_messages() {
     // Publish messages.
     topic
         .publish_messages(vec![
-            TopicMessage::new(Bytes::from("meow")),
-            TopicMessage::new(Bytes::from("can haz cheezburger?")),
+            TopicMessage::new(Bytes::from("meow"), None),
+            TopicMessage::new(Bytes::from("can haz cheezburger?"), None),
         ])
         .await
         .unwrap();
@@ -74,8 +74,8 @@ async fn nack_messages() {
     // Publish messages.
     topic
         .publish_messages(vec![
-            TopicMessage::new(Bytes::from("meow")),
-            TopicMessage::new(Bytes::from("can haz cheezburger?")),
+            TopicMessage::new(Bytes::from("meow"), None),
+            TopicMessage::new(Bytes::from("can haz cheezburger?"), None),
         ])
         .await
         .unwrap();

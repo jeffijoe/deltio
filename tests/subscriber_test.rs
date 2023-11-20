@@ -1,6 +1,6 @@
 use deltio::pubsub_proto::{
-    DeleteSubscriptionRequest, GetSubscriptionRequest, ListSubscriptionsRequest, PullRequest,
-    StreamingPullResponse,
+    DeleteSubscriptionRequest, GetSubscriptionRequest, ListSubscriptionsRequest, PublishRequest,
+    PubsubMessage, PullRequest, StreamingPullResponse,
 };
 use deltio::subscriptions::SubscriptionName;
 use deltio::topics::TopicName;
@@ -241,6 +241,105 @@ async fn test_streaming_pull() {
         collect_text_messages(&pull_response),
         vec!["Woah", "Much Resilient"]
     );
+
+    // Drop the streaming calls so the shutdown won't wait for them.
+    drop(sender);
+    drop(inbound);
+    server.dispose().await;
+}
+
+#[tokio::test]
+async fn test_streaming_pull_message_attributes() {
+    let mut server = TestHost::start().await.unwrap();
+
+    // Create a topic to subscribe to.
+    let topic_name = TopicName::new("test", "topic");
+    server.create_topic_with_name(&topic_name).await;
+
+    // Create a subscription.
+    let subscription_name = SubscriptionName::new("test", "subscription");
+    server
+        .create_subscription_with_name(&topic_name, &subscription_name)
+        .await;
+
+    // Start polling for messages.
+    let (sender, mut inbound) = server.streaming_pull(&subscription_name).await;
+
+    // Publish some messages with attributes, some without.
+    server
+        .publisher
+        .publish(PublishRequest {
+            topic: topic_name.to_string(),
+            messages: vec![
+                PubsubMessage {
+                    publish_time: None,
+                    attributes: vec![
+                        ("Attr1".to_string(), "Value1".to_string()),
+                        ("Attr2".to_string(), "Value2".to_string()),
+                    ]
+                    .into_iter()
+                    .collect(),
+                    message_id: Default::default(),
+                    ordering_key: Default::default(),
+                    data: "Hello".as_bytes().to_vec(),
+                },
+                PubsubMessage {
+                    publish_time: None,
+                    attributes: vec![("Super".to_string(), "Cool".to_string())]
+                        .into_iter()
+                        .collect(),
+                    message_id: Default::default(),
+                    ordering_key: Default::default(),
+                    data: "World".as_bytes().to_vec(),
+                },
+                PubsubMessage {
+                    publish_time: None,
+                    attributes: Default::default(),
+                    message_id: Default::default(),
+                    ordering_key: Default::default(),
+                    data: "No attrs".as_bytes().to_vec(),
+                },
+            ],
+        })
+        .await
+        .unwrap();
+
+    let pull_response = inbound.next().await.unwrap().unwrap();
+    assert_eq!(3, pull_response.received_messages.len());
+
+    // Assert that the messages contain the expected attributes.
+    let message = pull_response.received_messages[0].message.clone().unwrap();
+    assert_eq!(
+        "Hello".to_string(),
+        String::from_utf8(message.data.clone()).unwrap()
+    );
+    assert_eq!(message.attributes.len(), 2);
+    assert_eq!(
+        Some("Value1".to_string()),
+        message.attributes.get("Attr1").cloned(),
+    );
+    assert_eq!(
+        Some("Value2".to_string()),
+        message.attributes.get("Attr2").cloned(),
+    );
+
+    let message = pull_response.received_messages[1].message.clone().unwrap();
+    assert_eq!(
+        "World".to_string(),
+        String::from_utf8(message.data.clone()).unwrap()
+    );
+    assert_eq!(message.attributes.len(), 1);
+    assert_eq!(
+        Some("Cool".to_string()),
+        message.attributes.get("Super").cloned(),
+    );
+
+    let message = pull_response.received_messages[2].message.clone().unwrap();
+    assert_eq!(
+        "No attrs".to_string(),
+        String::from_utf8(message.data.clone()).unwrap()
+    );
+    assert!(message.attributes.is_empty());
 
     // Drop the streaming calls so the shutdown won't wait for them.
     drop(sender);
