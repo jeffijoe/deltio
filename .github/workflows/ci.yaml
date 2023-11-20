@@ -48,6 +48,16 @@ jobs:
         # Don't run on Windows because Unix sockets are not available.
         if: ${{ matrix.os != 'windows-latest' }}
         run: cargo test
+        
+      - name: E2E
+        shell: bash
+        run: |
+          # Start a Deltio instance in the background
+          ./target/release/deltio --bind 0.0.0.0:8085 --log trace &
+
+          # Run the E2E smoke test
+          cd e2e
+          cargo run
 
 concurrency:
   cancel-in-progress: true

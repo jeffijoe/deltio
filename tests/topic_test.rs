@@ -25,7 +25,7 @@ async fn delete_topic() {
 
     // Publish a message to the topic, but don't pull the subscription yet.
     topic
-        .publish_messages(vec![TopicMessage::new(Bytes::from("hello"))])
+        .publish_messages(vec![TopicMessage::new(Bytes::from("hello"), None)])
         .await
         .unwrap();
 

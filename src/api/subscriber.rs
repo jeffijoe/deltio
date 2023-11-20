@@ -606,11 +606,14 @@ fn map_to_received_message(m: &PulledMessage) -> ReceivedMessage {
         message: {
             let message = m.message();
             Some(PubsubMessage {
-                attributes: Default::default(),
                 publish_time: Some(prost_types::Timestamp::from(message.published_at)),
                 ordering_key: String::default(),
                 message_id: message.id.to_string(),
                 data: message.data.to_vec(),
+                attributes: match &message.attributes {
+                    Some(attrs) => attrs.clone(),
+                    None => Default::default(),
+                },
             })
         },
     }

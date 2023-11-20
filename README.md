@@ -63,7 +63,7 @@ As of this time, Deltio has **very limited functionality**, much less than the o
 * Get topic
 * List topics in a project
 * Publish messages
-  * Only the `data` property is respected
+  * Only the `data` and `attributes` properties are respected
 * Delete topics
 * Create subscription
   * Supports `name` and `ack_deadline_seconds` properties

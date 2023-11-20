@@ -3,13 +3,12 @@ use crate::api::parser;
 use crate::pubsub_proto::publisher_server::Publisher;
 use crate::pubsub_proto::*;
 use crate::topics::topic_manager::TopicManager;
+use crate::topics::TopicName;
 use crate::topics::{
     CreateTopicError, DeleteError, GetTopicError, ListSubscriptionsError, ListTopicsError,
     PublishMessagesError,
 };
-use crate::topics::{TopicMessage, TopicName};
 use crate::tracing::ActivitySpan;
-use bytes::Bytes;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tonic::{Request, Response, Status};
@@ -85,13 +84,11 @@ impl Publisher for PublisherService {
 
         let topic = self.get_topic_internal(&topic_name).await?;
 
-        let mut messages = Vec::with_capacity(request.messages.len());
-
-        for m in request.messages.iter() {
-            let data = Bytes::from(m.data.clone());
-            let message = TopicMessage::new(data);
-            messages.push(message);
-        }
+        let messages = request
+            .messages
+            .iter()
+            .map(parser::parse_topic_message)
+            .collect::<Vec<_>>();
 
         let result = topic
             .publish_messages(messages)

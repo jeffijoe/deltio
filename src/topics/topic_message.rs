@@ -1,5 +1,7 @@
 use bytes::Bytes;
+use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
+use std::hash::Hash;
 use std::time::SystemTime;
 
 /// Represents a published message to a topic.
@@ -8,13 +10,15 @@ pub struct TopicMessage {
     pub id: MessageId,
     pub published_at: SystemTime,
     pub data: Bytes,
+    pub attributes: Option<HashMap<String, String>>,
 }
 
 impl TopicMessage {
     /// Creates a new `TopicMessage` from the data.
-    pub fn new(data: Bytes) -> Self {
+    pub fn new(data: Bytes, attributes: Option<HashMap<String, String>>) -> Self {
         Self {
             data,
+            attributes,
             id: MessageId::default(),
             published_at: SystemTime::UNIX_EPOCH,
         }
