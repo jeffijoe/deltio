@@ -212,7 +212,7 @@ impl Eq for Subscription {}
 /// Subscriptions are ordered by their internal ID.
 impl PartialOrd<Self> for Subscription {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        self.internal_id.partial_cmp(&other.internal_id)
+        Some(self.cmp(other))
     }
 }
 

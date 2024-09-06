@@ -8,6 +8,8 @@ use deltio::subscriptions::SubscriptionName;
 use deltio::topics::TopicName;
 use deltio::Deltio;
 use futures::FutureExt;
+use hyper_util::rt::TokioIo;
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::mpsc::Sender;
@@ -101,8 +103,15 @@ impl TestHost {
         let channel = Endpoint::try_from("http://doesnt.matter")
             .map_err(TestHostError::ClientError)?
             .connect_with_connector(service_fn({
-                let sock_file = sock_file.clone();
-                move |_| UnixStream::connect(sock_file.clone())
+                let sock_file = Arc::new(sock_file.clone());
+                move |_| {
+                    let sock_file = Arc::clone(&sock_file);
+                    async move {
+                        Ok::<_, std::io::Error>(TokioIo::new(
+                            UnixStream::connect(sock_file.as_ref()).await?,
+                        ))
+                    }
+                }
             }))
             .await
             .map_err(TestHostError::ClientError)?;

@@ -1,4 +1,4 @@
-FROM --platform=$BUILDPLATFORM rust:1.74 as build
+FROM --platform=$BUILDPLATFORM rust:1.81 as build
 
 # Install Protocol Buffers.
 RUN apt-get update && apt-get install -y protobuf-compiler clang musl-tools musl-dev
