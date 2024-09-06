@@ -7,7 +7,7 @@ permissions:
 on:
   push:
     branches:
-      - main
+      - "**"
     tags:
       - 'v*'
 
@@ -21,6 +21,8 @@ jobs:
     outputs:
       tag: ${{ steps.compute.outputs.tag }}
       docker_tags: ${{ steps.compute.outputs.docker_tags }}
+      push: ${{ startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/main' }}
+
     steps:
       - name: "Compute Release Tag"
         id: compute
@@ -79,7 +81,7 @@ jobs:
           context: .
           file: ./Dockerfile
           platforms: linux/386,linux/amd64,linux/arm64
-          push: true
+          push: ${{ fromJSON(needs.tag.outputs.push) }}
           tags: ${{ needs.tag.outputs.docker_tags }}
 
   binary:
@@ -200,6 +202,7 @@ jobs:
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
+        if: ${{ fromJSON(needs.tag.outputs.push) }}
         with:
           name: ${{ matrix.asset_name }}
           path: ./target/${{ matrix.target }}/release/${{ matrix.artifact_name }}
@@ -207,6 +210,7 @@ jobs:
       - name: Archive Release
         shell: bash
         id: archive
+        if: ${{ fromJSON(needs.tag.outputs.push) }}
         run: |
           # Compress to zip or tar.gz based on the OS.
           DEST="";
