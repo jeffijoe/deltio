@@ -9,6 +9,7 @@ use hyper::body::Bytes;
 use hyper::server::conn::http1;
 use hyper::service::service_fn;
 use hyper::{Request, Response, StatusCode};
+use hyper_util::rt::TokioIo;
 use tokio::net::TcpListener;
 use tokio::task::JoinHandle;
 
@@ -80,7 +81,7 @@ impl TestPushServer {
                     // Spawn a tokio task to serve multiple connections concurrently
                     tokio::task::spawn(async move {
                         if let Err(err) = http1::Builder::new()
-                            .serve_connection(stream, service_fn(handle_request))
+                            .serve_connection(TokioIo::new(stream), service_fn(handle_request))
                             .await
                         {
                             println!("Error serving connection: {:?}", err);

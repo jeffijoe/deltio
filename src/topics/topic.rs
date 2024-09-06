@@ -136,7 +136,7 @@ impl Eq for Topic {}
 /// Topics are ordered by their internal ID.
 impl PartialOrd<Self> for Topic {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        self.internal_id.partial_cmp(&other.internal_id)
+        Some(self.cmp(other))
     }
 }
 
